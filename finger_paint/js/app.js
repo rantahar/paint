@@ -125,19 +125,30 @@
     appRoot.setAttribute('tabindex', '0');
     appRoot.focus();
 
-    // Track fullscreen state changes — handles Esc as well as Ctrl+F exit
-    document.addEventListener('fullscreenchange', () => {
-      const entering = !!document.fullscreenElement;
-      state.isFullscreen = entering;
-      if (entering) {
-        disableBtn('upload');
-        if (state.savedJustNow) disableBtn('save');
-      } else {
-        enableBtn('upload');
-        enableBtn('save');
+    // Track fullscreen state changes — handles both Fullscreen API (Ctrl+F) and browser fullscreen (F11)
+    function updateFullscreenState() {
+      // Check Fullscreen API (Ctrl+F)
+      const apiFullscreen = !!document.fullscreenElement;
+      // Check browser fullscreen (F11): window dimensions match screen dimensions (within 1 pixel tolerance)
+      const browserFullscreen = Math.abs(window.innerWidth - screen.width) < 2 &&
+                               Math.abs(window.innerHeight - screen.height) < 2;
+      const entering = apiFullscreen || browserFullscreen;
+
+      if (entering !== state.isFullscreen) {
+        state.isFullscreen = entering;
+        if (entering) {
+          disableBtn('upload');
+          if (state.savedJustNow) disableBtn('save');
+        } else {
+          enableBtn('upload');
+          enableBtn('save');
+        }
+        renderAll();
       }
-      renderAll();
-    });
+    }
+
+    document.addEventListener('fullscreenchange', updateFullscreenState);
+    window.addEventListener('resize', updateFullscreenState);
 
     // Keyboard handling: capture phase to intercept before browser defaults
     // Ctrl+G and Ctrl+F work in both modes; other keys only captured in fullscreen
