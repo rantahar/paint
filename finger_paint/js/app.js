@@ -43,6 +43,8 @@
     scrollOffset:   0,                        // index of first visible thumbnail
     loadedDrawingId: null,                    // currently loaded saved drawing (id) — flipped to null on any change
     savedJustNow:   false,                    // toggled true after Save; false on any change
+    frameMode:      true,                     // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
+    isFullscreen:   false,                    // actual fullscreen via F11/Ctrl+F
   };
 
   // Rendered references
@@ -51,6 +53,23 @@
   let buttonLayer = null;      // div holding all toolbar buttons
   let panelLayer  = null;      // div holding panel-bg elements
   let lastLayout  = null;
+
+  // ── Fullscreen ────────────────────────────────────────────────
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      appRoot.requestFullscreen().then(() => {
+        state.isFullscreen = true;
+        renderAll();
+      }).catch(err => {
+        console.error('Fullscreen request failed:', err);
+      });
+    } else {
+      document.exitFullscreen().then(() => {
+        state.isFullscreen = false;
+        renderAll();
+      });
+    }
+  }
 
   // ── Boot ──────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', init);
@@ -96,6 +115,36 @@
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', () => renderAll());
     }
+
+    // Track fullscreen state changes (user may exit via ESC or other means)
+    document.addEventListener('fullscreenchange', () => {
+      state.isFullscreen = !!document.fullscreenElement;
+      renderAll();
+    });
+
+    // Keyboard handling: only capture in fullscreen mode (keyboard-cat-safe kiosk)
+    document.addEventListener('keydown', (e) => {
+      if (!state.isFullscreen) return;
+
+      const isCtrlG = (e.ctrlKey || e.metaKey) && e.key === 'g';
+      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key === 'f';
+
+      if (isCtrlG) {
+        e.preventDefault();
+        state.frameMode = !state.frameMode;
+        renderAll();
+      } else if (isCtrlF) {
+        e.preventDefault();
+        toggleFullscreen();
+      } else {
+        e.preventDefault();
+      }
+    });
+    document.addEventListener('keyup', (e) => {
+      if (state.isFullscreen) {
+        e.preventDefault();
+      }
+    });
   }
 
   // ── Render ────────────────────────────────────────────────────
@@ -105,14 +154,17 @@
     const layout = FP.computeLayout(w, h, state.saved.length);
     lastLayout = layout;
 
-    // Reposition canvas
-    canvasComp.setRect(layout.canvas);
+    // Reposition canvas based on frame mode
+    const canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
+    canvasComp.setRect(canvasRect);
 
     // Clear layers
     panelLayer.innerHTML  = '';
     buttonLayer.innerHTML = '';
 
-    renderPanels(layout);
+    if (state.frameMode) {
+      renderPanels(layout);
+    }
     renderColorSwatches(layout);
     renderTools(layout);
     if (layout.orientation === 'landscape') renderBottomRow(layout);
