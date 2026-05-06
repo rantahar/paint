@@ -486,7 +486,7 @@
       if (choice === 'save') doSave();
     }
     await canvasComp.pageFlip(async () => {
-      canvasComp.reset();
+      canvasComp.clearDrawing();
       onCanvasContentChanged();
     });
   }
@@ -533,11 +533,18 @@
       FP.playSound('deleteDrawing');
       renderAll();
     } else {
+      // Warn if unsaved changes would be lost
+      if (canvasComp.dirtySinceLoad) {
+        const choice = await FP.dialogs.loadWithDirty();
+        if (choice === 'cancel' || choice == null) return;
+        if (choice === 'save') doSave();
+      }
       // Load this drawing onto the canvas (with page flip)
       await canvasComp.pageFlip(async () => {
         await canvasComp.loadCompositeFromDataUrl(entry.png);
         state.loadedDrawingId = entry.id;
         state.savedJustNow    = false;
+        enableBtn('save');  // loading is a clean state — re-enable save if it was disabled
       });
       renderAll();
     }

@@ -114,6 +114,18 @@ FP.dialogs = {
     });
   },
 
+  loadWithDirty() {
+    return this.confirm({
+      title: 'Load over unsaved changes?',
+      message: 'Your drawing has unsaved changes.',
+      choices: [
+        { label: 'Save first',   value: 'save',   kind: 'primary', icon: 'save'   },
+        { label: 'Load anyway',  value: 'load',   kind: 'danger',  icon: 'clear'  },
+        { label: 'Cancel',       value: 'cancel',                  icon: 'cancel' },
+      ],
+    });
+  },
+
   deleteSaved() {
     return this.confirm({
       title: 'Delete this drawing?',
