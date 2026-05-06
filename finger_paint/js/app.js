@@ -494,27 +494,19 @@
   }
 
   function _sizeDotPercent(sizeIdx, canvasWidth, buttonSize) {
-    // Each brush sets `strokeScale` = (painted diameter) / (size). Defaults to 2
-    // (the marker convention) if a brush forgot to declare one.
-    const brush = FP.brushes[state.activeBrushId];
-    const scale = (brush && typeof brush.strokeScale === 'number') ? brush.strokeScale : 2;
+    // Every brush is normalized so `opts.size` is its painted radius — the
+    // canonical painted diameter is therefore `size * 2`. The preview dot
+    // shows that diameter so a brush stroke never exceeds the dot.
+    const currentSize = SIZE_LEVELS[sizeIdx];
+    const strokeCssPx = currentSize * 2 * (canvasWidth / 1000);
 
-    const currentSize  = SIZE_LEVELS[sizeIdx];
-    const strokeCssPx  = currentSize * scale * (canvasWidth / 1000);
-
-    // .btn has `box-sizing: border-box` with a 2px border on each side, so the
+    // .btn has `box-sizing: border-box` with a 2px border on each side, so a
     // child's `width: N%` is taken from the content area = buttonSize - 4.
     const innerSize = Math.max(1, buttonSize - 4);
     let percent = (strokeCssPx / innerSize) * 100;
 
     // Cap so the dot doesn't overflow the button visually.
     percent = Math.max(6, Math.min(95, percent));
-
-    console.log('[_sizeDotPercent] brush:', state.activeBrushId, 'scale:', scale,
-                'sizeIdx:', sizeIdx, 'sizeRadius:', currentSize,
-                'canvasW:', canvasWidth, 'btnSize:', buttonSize,
-                'strokeDiameterCssPx:', strokeCssPx.toFixed(2),
-                'percent:', percent.toFixed(2));
     return percent;
   }
 

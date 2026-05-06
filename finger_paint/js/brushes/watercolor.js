@@ -15,8 +15,6 @@
     id:       'watercolor',
     label:    'Watercolor',
     iconName: 'watercolor',
-    // _stamp uses radius = size * 1.6 → diameter = size * 3.2
-    strokeScale: 3.2,
 
     sounds: {
       select:     function () { /* play 'water-select.wav' */ },
@@ -33,7 +31,9 @@
       buf.height = ctx.canvas.height;
       const bctx = buf.getContext('2d');
 
-      const radius = opts.size * 1.6; // wider than marker
+      // Use opts.size as the gradient radius so the painted footprint diameter
+      // (= opts.size * 2) matches every other brush and the size-indicator dot.
+      const radius = opts.size;
 
       // initial soft circle
       _stamp(bctx, pt.x, pt.y, radius, opts.color);

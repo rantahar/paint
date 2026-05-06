@@ -14,8 +14,6 @@
     id:       'eraser',
     label:    'Eraser',
     iconName: 'eraser',
-    // lineWidth = size * 2.5 → effective diameter = size * 2.5
-    strokeScale: 2.5,
 
     sounds: {
       select:     function () { /* play 'eraser-select.wav' */ },
@@ -29,12 +27,12 @@
       ctx.globalCompositeOperation = 'destination-out';
       ctx.lineCap   = 'round';
       ctx.lineJoin  = 'round';
-      ctx.lineWidth = opts.size * 2.5;
+      ctx.lineWidth = opts.size * 2;
       ctx.strokeStyle = '#000'; // color is irrelevant for destination-out
       ctx.fillStyle   = '#000';
 
       ctx.beginPath();
-      ctx.arc(pt.x, pt.y, opts.size * 1.25, 0, Math.PI * 2);
+      ctx.arc(pt.x, pt.y, opts.size, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
@@ -46,7 +44,7 @@
       ctx.globalCompositeOperation = 'destination-out';
       ctx.lineCap   = 'round';
       ctx.lineJoin  = 'round';
-      ctx.lineWidth = opts.size * 2.5;
+      ctx.lineWidth = opts.size * 2;
       ctx.strokeStyle = '#000';
 
       ctx.beginPath();

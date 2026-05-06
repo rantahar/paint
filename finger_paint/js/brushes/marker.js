@@ -20,8 +20,6 @@
     id:       'marker',
     label:    'Marker',
     iconName: 'marker',
-    // size is treated as radius; lineWidth=size*2 → diameter=size*2
-    strokeScale: 2,
 
     sounds: {
       // Per-brush placeholders (see sounds.js). Drop in audio later.
