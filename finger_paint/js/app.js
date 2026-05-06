@@ -255,23 +255,22 @@
     const B = layout.B;
 
     // Upload (col 0) — disabled in fullscreen to prevent file dialogs breaking out
-    if (!state.isFullscreen) {
-      makeBtn({
-        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-        onTap: handleUploadTap,
-        innerHTML: FP.icon('upload', B * 0.44),
-        ariaLabel: 'Upload background',
-      });
-    }
+    makeBtn({
+      x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+      onTap: handleUploadTap,
+      innerHTML: FP.icon('upload', B * 0.44),
+      ariaLabel: 'Upload background',
+      disabled: state.isFullscreen,
+    });
 
-    // Save / Download-All (col 1) — always show save, but prevent download toggle in fullscreen
-    const showDownloadIcon = state.savedJustNow && !state.isFullscreen;
+    // Save (col 1) — disabled if nothing changed since last save
     makeBtn({
       x: r.saveXY.x, y: r.saveXY.y, size: B,
       accent: true,
       onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(showDownloadIcon ? 'download' : 'save', B * 0.44),
-      ariaLabel: showDownloadIcon ? 'Download all' : 'Save drawing',
+      innerHTML: FP.icon('save', B * 0.44),
+      ariaLabel: state.savedJustNow ? 'Drawing saved' : 'Save drawing',
+      disabled: state.savedJustNow,
     });
 
     // Scroll arrows (if overflow)
@@ -322,25 +321,24 @@
       ariaLabel: 'Clear drawing',
     });
 
-    // Save / Download-All — always show save, but prevent download toggle in fullscreen
-    const showDownloadIcon = state.savedJustNow && !state.isFullscreen;
+    // Save — disabled if nothing changed since last save
     makeBtn({
       x: r.saveXY.x, y: r.saveXY.y, size: B,
       accent: true,
       onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(showDownloadIcon ? 'download' : 'save', B * 0.44),
-      ariaLabel: showDownloadIcon ? 'Download all' : 'Save drawing',
+      innerHTML: FP.icon('save', B * 0.44),
+      ariaLabel: state.savedJustNow ? 'Drawing saved' : 'Save drawing',
+      disabled: state.savedJustNow,
     });
 
     // Upload (bottom) — disabled in fullscreen to prevent file dialogs breaking out
-    if (!state.isFullscreen) {
-      makeBtn({
-        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-        onTap: handleUploadTap,
-        innerHTML: FP.icon('upload', B * 0.44),
-        ariaLabel: 'Upload background',
-      });
-    }
+    makeBtn({
+      x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+      onTap: handleUploadTap,
+      innerHTML: FP.icon('upload', B * 0.44),
+      ariaLabel: 'Upload background',
+      disabled: state.isFullscreen,
+    });
 
     // Scroll arrows
     if (r.hasOverflow) {
@@ -394,13 +392,14 @@
   }
 
   // Generic button factory — appended to buttonLayer.
-  function makeBtn({ x, y, size, bg, color, active, accent, indicator,
+  function makeBtn({ x, y, size, bg, color, active, accent, indicator, disabled,
                      onTap, innerHTML, ariaLabel, extraClass }) {
     const b = document.createElement('button');
     b.className = 'btn';
     if (active)    b.classList.add('active');
     if (accent)    b.classList.add('accent');
     if (indicator) b.classList.add('indicator');
+    if (disabled)  b.classList.add('disabled');
     if (color && LIGHT_COLORS.has(color)) b.classList.add('light-color');
     if (extraClass) b.classList.add(extraClass);
     if (ariaLabel)  b.setAttribute('aria-label', ariaLabel);
@@ -414,7 +413,7 @@
     });
     if (bg) b.style.background = bg;
     if (innerHTML) b.innerHTML = innerHTML;
-    if (onTap) b.addEventListener('click', onTap);
+    if (onTap && !disabled) b.addEventListener('click', onTap);
     buttonLayer.appendChild(b);
     return b;
   }
@@ -480,14 +479,7 @@
   }
 
   function handleSaveOrDownloadAll() {
-    // In fullscreen, always save (never download)
-    if (state.savedJustNow && !state.isFullscreen) {
-      // Download-All mode
-      FP.storage.downloadAll();
-      FP.playSound('saveDrawing');
-    } else {
-      doSave();
-    }
+    doSave();
   }
 
   function doSave() {
