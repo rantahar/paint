@@ -59,21 +59,11 @@
   // ── Fullscreen ────────────────────────────────────────────────
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
-      appRoot.requestFullscreen().then(() => {
-        state.isFullscreen = true;
-        disableBtn('upload');
-        if (state.savedJustNow) disableBtn('save');
-        renderAll();
-      }).catch(err => {
+      appRoot.requestFullscreen().catch(err => {
         console.error('Fullscreen request failed:', err);
       });
     } else {
-      document.exitFullscreen().then(() => {
-        state.isFullscreen = false;
-        enableBtn('upload');
-        enableBtn('save');
-        renderAll();
-      });
+      document.exitFullscreen();
     }
   }
 
@@ -134,9 +124,17 @@
     appRoot.setAttribute('tabindex', '0');
     appRoot.focus();
 
-    // Track fullscreen state changes (user may exit via ESC or other means)
+    // Track fullscreen state changes — handles Esc as well as Ctrl+F exit
     document.addEventListener('fullscreenchange', () => {
-      state.isFullscreen = !!document.fullscreenElement;
+      const entering = !!document.fullscreenElement;
+      state.isFullscreen = entering;
+      if (entering) {
+        disableBtn('upload');
+        if (state.savedJustNow) disableBtn('save');
+      } else {
+        enableBtn('upload');
+        enableBtn('save');
+      }
       renderAll();
     });
 
@@ -357,17 +355,17 @@
       disabled: state.disabledButtons.has('upload'),
     });
 
-    // Scroll arrows
+    // Scroll arrows — up (near Clear) shows older; down (near Save) shows newer
     if (r.hasOverflow) {
       makeBtn({
         x: r.scrollUpXY.x, y: r.scrollUpXY.y, size: B,
-        onTap: () => scrollSaved(-1),
+        onTap: () => scrollSaved(+1),
         innerHTML: FP.icon('scrollUp', B * 0.44),
         ariaLabel: 'Scroll up',
       });
       makeBtn({
         x: r.scrollDownXY.x, y: r.scrollDownXY.y, size: B,
-        onTap: () => scrollSaved(+1),
+        onTap: () => scrollSaved(-1),
         innerHTML: FP.icon('scrollDown', B * 0.44),
         ariaLabel: 'Scroll down',
       });
@@ -550,9 +548,8 @@
   function scrollSaved(direction) {
     if (!lastLayout) return;
     const r = lastLayout.bottomRow || lastLayout.rightCol;
-    const page = Math.max(1, r.maxVisible);
     const max  = Math.max(0, state.saved.length - r.maxVisible);
-    state.scrollOffset = Math.max(0, Math.min(max, state.scrollOffset + direction * page));
+    state.scrollOffset = Math.max(0, Math.min(max, state.scrollOffset + direction));
     FP.playSound('scroll');
     renderAll();
   }
