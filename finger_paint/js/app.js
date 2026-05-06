@@ -51,6 +51,9 @@
     pointerDownOnButton: new Set(),           // tracks pointerIds that had pointerdown on buttons (for tap-drag to canvas)
   };
 
+  // Expose state so canvas.js (and any other FP module) can read pointerDownOnButton
+  FP.state = state;
+
   // Rendered references
   let canvasComp = null;       // FP.PaintingCanvas instance
   let appRoot    = null;
@@ -289,7 +292,7 @@
         active = (state.activeBrushId === t.id);
       } else if (t.kind === 'sizeIndicator') {
         indicator = true;
-        const dotPercent = _sizeDotPercent(state.sizeIdx, layout.canvas.width);
+        const dotPercent = _sizeDotPercent(state.sizeIdx, layout.canvas.width, layout.B);
         inner = `<div class="size-dot" style="width:${dotPercent}%;height:${dotPercent}%;"></div>`;
       } else {
         // sizeUp / sizeDown / bgFill
@@ -490,25 +493,25 @@
     return b;
   }
 
-  function _sizeDotPercent(sizeIdx, canvasWidth) {
-    // Scale painting units to CSS pixels, then to button percentage
-    // Painted stroke size in CSS pixels = size_in_painting_units * (canvasWidth / 1000)
-    const currentSize = SIZE_LEVELS[sizeIdx];
-    const strokeCssPixels = currentSize * (canvasWidth / 1000);
+  function _sizeDotPercent(sizeIdx, canvasWidth, buttonSize) {
+    // Brushes treat opts.size as a RADIUS (marker uses arc(r=size) and lineWidth=size*2).
+    // So painted stroke DIAMETER in painting units = size * 2.
+    // Convert to CSS pixels via the canvas display scale (canvasWidth / 1000).
+    const currentSize    = SIZE_LEVELS[sizeIdx];
+    const strokeCssPx    = currentSize * 2 * (canvasWidth / 1000);
 
-    // Now calculate what percentage of the button (layout.B) this represents
-    // We don't have layout.B directly, but buttons are ~8-10% of canvas height
-    // Instead: find what the stroke would be at max size, use that to bound the percentage
-    const maxSize = SIZE_LEVELS[SIZE_LEVELS.length - 1];  // 72
-    const maxStrokeCssPixels = maxSize * (canvasWidth / 1000);
+    // Preview dot lives inside a .btn with `box-sizing: border-box` and 2px borders,
+    // so the child's % is taken from the content area = buttonSize - 4.
+    const innerSize = Math.max(1, buttonSize - 4);
+    let percent = (strokeCssPx / innerSize) * 100;
 
-    // Map: 0px → 10%, maxStrokeCssPixels → 85%
-    // But cap the minimum at 10% for visibility (don't go below 10%)
-    const minPercent = 10, maxPercent = 85;
-    const percentForMaxStroke = maxPercent;  // 85% for the largest brush
-    const percent = Math.max(minPercent, (strokeCssPixels / maxStrokeCssPixels) * percentForMaxStroke);
+    // Clamp so the dot stays inside the button (border + padding leave ~10% buffer).
+    percent = Math.max(8, Math.min(90, percent));
 
-    console.log('[_sizeDotPercent] sizeIdx:', sizeIdx, 'currentSize:', currentSize, 'canvasWidth:', canvasWidth, 'strokeCssPixels:', strokeCssPixels, 'percent:', percent);
+    console.log('[_sizeDotPercent] sizeIdx:', sizeIdx, 'currentSize(radius):', currentSize,
+                'canvasWidth:', canvasWidth, 'buttonSize:', buttonSize,
+                'strokeCssPx(diameter):', strokeCssPx.toFixed(2),
+                'percent:', percent.toFixed(2));
     return percent;
   }
 
