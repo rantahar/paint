@@ -31,12 +31,13 @@
   const SIZE_LEVELS = [4, 6, 9, 13, 18, 24, 32, 42, 56, 72];
   const DEFAULT_SIZE_IDX = 3;  // size 13
 
-  const DEFAULT_BG_COLOR = '#dff0fa';
+  const DEFAULT_BG_COLOR = '#ffffff';  // white
+  const DEFAULT_COLOR_IDX = 14;  // black (#111111)
 
   // ── State ─────────────────────────────────────────────────────
   const state = {
     palette:        DEFAULT_PALETTE.slice(),
-    activeColorIdx: 8,                        // blue
+    activeColorIdx: DEFAULT_COLOR_IDX,        // black
     activeBrushId:  'marker',
     sizeIdx:        DEFAULT_SIZE_IDX,
     saved:          [],                       // from storage, most-recent first

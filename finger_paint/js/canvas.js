@@ -46,8 +46,8 @@ FP.PaintingCanvas = class {
     this.drawCtx = this.drawCanvas.getContext('2d');
     this.paintingEl.appendChild(this.drawCanvas);
 
-    // Initial light-blue paper
-    this._currentBgColor = '#dff0fa';
+    // Initial white paper
+    this._currentBgColor = '#ffffff';
     this._fillBg(this._currentBgColor);
     this.wrapEl.style.background = this._currentBgColor;
 
@@ -155,9 +155,9 @@ FP.PaintingCanvas = class {
     this._setDirty(false);
   }
 
-  /** Full reset — bg light blue + empty drawing. */
+  /** Full reset — bg white + empty drawing. */
   reset() {
-    this.fillBackground('#dff0fa');
+    this.fillBackground('#ffffff');
     this.clearDrawing();
   }
 

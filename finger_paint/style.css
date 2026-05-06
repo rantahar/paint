@@ -28,7 +28,7 @@ html, body {
 .painting {
   position: absolute;
   overflow: hidden;
-  background: #dff0fa;
+  background: #ffffff;
   transform-origin: center center;
   /* perspective applied on parent for page-flip animation */
 }
