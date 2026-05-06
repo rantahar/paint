@@ -71,6 +71,10 @@ FP.dialogs = {
       back.appendChild(dlg);
       document.body.appendChild(back);
 
+      // Shift focus into dialog so Enter activates dialog buttons, not the triggering toolbar button
+      const firstFocusable = row.querySelector('.primary') || row.querySelector('.dialog-btn');
+      if (firstFocusable) requestAnimationFrame(() => firstFocusable.focus());
+
       // Backdrop click → cancel (counts as null, never a choice)
       back.addEventListener('click', e => {
         if (e.target === back) close(null);

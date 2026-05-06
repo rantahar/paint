@@ -62,6 +62,7 @@
       appRoot.requestFullscreen().then(() => {
         state.isFullscreen = true;
         disableBtn('upload');
+        if (state.savedJustNow) disableBtn('save');
         renderAll();
       }).catch(err => {
         console.error('Fullscreen request failed:', err);
@@ -70,6 +71,7 @@
       document.exitFullscreen().then(() => {
         state.isFullscreen = false;
         enableBtn('upload');
+        enableBtn('save');
         renderAll();
       });
     }
@@ -276,12 +278,15 @@
     });
 
     // Save / Download-All (col 1)
+    // In fullscreen: always show save, disable when already saved (no re-saving, no download)
+    const showDl = state.savedJustNow && !state.isFullscreen;
     makeBtn({
       x: r.saveXY.x, y: r.saveXY.y, size: B,
       accent: true,
       onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
-      ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
+      innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
+      ariaLabel: showDl ? 'Download all' : 'Save drawing',
+      disabled: state.disabledButtons.has('save'),
     });
 
     // Scroll arrows (if overflow)
@@ -333,12 +338,14 @@
     });
 
     // Save / Download-All
+    const showDl = state.savedJustNow && !state.isFullscreen;
     makeBtn({
       x: r.saveXY.x, y: r.saveXY.y, size: B,
       accent: true,
       onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
-      ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
+      innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
+      ariaLabel: showDl ? 'Download all' : 'Save drawing',
+      disabled: state.disabledButtons.has('save'),
     });
 
     // Upload (bottom)
@@ -510,6 +517,8 @@
     state.saved = FP.storage.list();
     state.savedJustNow = true;
     state.scrollOffset = 0;  // scroll to show new drawing at front
+    canvasComp.markSaved();  // reset dirty so next stroke re-triggers onDirtyChange
+    if (state.isFullscreen) disableBtn('save');  // no re-saving until drawing changes
     FP.playSound('saveDrawing');
     renderAll();
   }
@@ -636,7 +645,11 @@
     // Any drawing/bg/clear/load that originates from the user voids the
     // "just-saved" / "loaded" states.
     let needsRender = false;
-    if (state.savedJustNow)      { state.savedJustNow = false;     needsRender = true; }
+    if (state.savedJustNow) {
+      state.savedJustNow = false;
+      enableBtn('save');  // re-enable save button if it was disabled in fullscreen
+      needsRender = true;
+    }
     if (state.loadedDrawingId)   { state.loadedDrawingId = null;   needsRender = true; }
     if (needsRender) renderAll();
   }

@@ -161,6 +161,11 @@ FP.PaintingCanvas = class {
     this.clearDrawing();
   }
 
+  /** Call after saving — resets dirty so next stroke will re-trigger onDirtyChange. */
+  markSaved() {
+    this._setDirty(false);
+  }
+
   // ── Output ──────────────────────────────────────────────────
   /** Composite both layers into a fresh canvas, return PNG data URL. */
   toCompositeDataURL() {
