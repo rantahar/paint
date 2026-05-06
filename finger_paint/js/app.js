@@ -76,15 +76,21 @@
       document.exitFullscreen();
     } else if (inBrowserFullscreen) {
       // In browser fullscreen (F11) but not API fullscreen
-      console.log('[toggleFullscreen] In browser fullscreen only - attempting to dispatch F11');
-      window.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'F11',
-        code: 'F11',
-        keyCode: 122,
-        which: 122,
+      console.log('[toggleFullscreen] In browser fullscreen only - attempting held Escape');
+      const escapeKeyEvent = (type) => new KeyboardEvent(type, {
+        key: 'Escape',
+        code: 'Escape',
+        keyCode: 27,
+        which: 27,
         bubbles: true,
         cancelable: true
-      }));
+      });
+      document.dispatchEvent(escapeKeyEvent('keydown'));
+      console.log('[toggleFullscreen] Escape keydown dispatched, waiting 5 seconds...');
+      setTimeout(() => {
+        document.dispatchEvent(escapeKeyEvent('keyup'));
+        console.log('[toggleFullscreen] Escape keyup dispatched');
+      }, 5000);
     } else {
       // Not in any fullscreen, enter API fullscreen
       console.log('[toggleFullscreen] Not in fullscreen - entering API fullscreen');
