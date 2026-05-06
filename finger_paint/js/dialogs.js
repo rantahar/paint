@@ -69,7 +69,10 @@ FP.dialogs = {
       });
       dlg.appendChild(row);
       back.appendChild(dlg);
-      document.body.appendChild(back);
+      // Append to fullscreen element if active, otherwise to body
+      // This ensures dialogs appear above fullscreen content (which creates a new stacking context)
+      const target = document.fullscreenElement || document.body;
+      target.appendChild(back);
       document.body.classList.add('dialog-open');
 
       // Shift focus into dialog so Enter activates dialog buttons, not the triggering toolbar button
