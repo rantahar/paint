@@ -556,8 +556,8 @@
         await canvasComp.loadCompositeFromDataUrl(entry.png);
         state.loadedDrawingId = entry.id;
         state.loadedDrawingPng = entry.png;
-        state.savedJustNow    = false;
-        // Do NOT re-enable save — loaded drawing is already saved
+        state.savedJustNow    = true;  // show download button for the loaded drawing
+        // Do NOT re-enable save button — loaded drawing is already saved
       });
       renderAll();
     }
