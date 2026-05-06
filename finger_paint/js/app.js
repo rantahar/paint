@@ -527,6 +527,7 @@
       FP.storage.remove(entry.id);
       state.saved = FP.storage.list();
       state.loadedDrawingId = null;
+      enableBtn('save');  // canvas now has no saved copy — allow saving in fullscreen
       // Clamp scrollOffset
       state.scrollOffset = Math.max(0, Math.min(
         state.scrollOffset, Math.max(0, state.saved.length - 1)));
@@ -544,7 +545,7 @@
         await canvasComp.loadCompositeFromDataUrl(entry.png);
         state.loadedDrawingId = entry.id;
         state.savedJustNow    = false;
-        enableBtn('save');  // loading is a clean state — re-enable save if it was disabled
+        // Do NOT re-enable save — loaded drawing is already saved
       });
       renderAll();
     }
