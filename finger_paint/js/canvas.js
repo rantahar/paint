@@ -232,7 +232,6 @@ FP.PaintingCanvas = class {
   // ── Pointer handlers ────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
-    console.log('[canvas._onDown] Starting stroke. pointerId:', e.pointerId, 'brush:', this.brush.id, 'size:', this.size);
     // setPointerCapture can throw on synthetic / non-primary events;
     // the stroke still works without it, just less robust to gestures
     // that move outside the canvas.
@@ -256,13 +255,9 @@ FP.PaintingCanvas = class {
 
     // If stroke hasn't started but pointer came from a button, start it now
     if (!stroke && FP && FP.state && FP.state.pointerDownOnButton.has(e.pointerId)) {
-      console.log('[canvas._onMove] Pointer from button entered canvas, starting stroke. pointerId:', e.pointerId);
       this._onDown(e);
       stroke = this.activeStrokes.get(e.pointerId);
-      if (!stroke) {
-        console.log('[canvas._onMove] Failed to start stroke');
-        return;  // failed to start stroke
-      }
+      if (!stroke) return;  // failed to start stroke
       FP.state.pointerDownOnButton.delete(e.pointerId);
     }
 
@@ -284,8 +279,6 @@ FP.PaintingCanvas = class {
 
   _onUp(e) {
     const stroke = this.activeStrokes.get(e.pointerId);
-    const wasOnButton = FP && FP.state && FP.state.pointerDownOnButton.has(e.pointerId);
-    console.log('[canvas._onUp] pointerId:', e.pointerId, 'hadStroke:', !!stroke, 'wasOnButton:', wasOnButton);
 
     // Clean up button tracking
     if (FP && FP.state) {

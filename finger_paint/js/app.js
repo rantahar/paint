@@ -482,7 +482,6 @@
     if (onTap && !disabled) {
       b.addEventListener('pointerdown', (e) => {
         // Track that this pointer started on a button (for tap-drag to canvas)
-        console.log('[makeBtn pointerdown]', ariaLabel || 'button', 'pointerId:', e.pointerId);
         state.pointerDownOnButton.add(e.pointerId);
         // Prevent default button behavior that might interfere with dialogs
         e.preventDefault();
@@ -544,13 +543,10 @@
   }
 
   function handleBgFillTap() {
-    const oldIdx = state.activeColorIdx;
     const c = state.palette[state.activeColorIdx];
-    console.log('[handleBgFillTap] Filling background with color:', c, 'at index:', oldIdx);
     canvasComp.fillBackground(c);
     // Auto-switch to opposite column color (flip LSB)
     state.activeColorIdx = state.activeColorIdx ^ 1;
-    console.log('[handleBgFillTap] Switched color from index', oldIdx, 'to', state.activeColorIdx, '=', state.palette[state.activeColorIdx]);
     canvasComp.setColor(state.palette[state.activeColorIdx]);
     onCanvasContentChanged();
     renderAll();
