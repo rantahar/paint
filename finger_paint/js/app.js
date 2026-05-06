@@ -68,12 +68,15 @@
     const inApiFullscreen = !!document.fullscreenElement;
     const inBrowserFullscreen = isBrowserFullscreen();
 
+    console.log('[toggleFullscreen] inApiFullscreen:', inApiFullscreen, 'inBrowserFullscreen:', inBrowserFullscreen);
+
     if (inApiFullscreen) {
       // Exit API fullscreen
+      console.log('[toggleFullscreen] Exiting API fullscreen');
       document.exitFullscreen();
     } else if (inBrowserFullscreen) {
       // In browser fullscreen (F11) but not API fullscreen
-      // Exit by dispatching F11 key to toggle browser fullscreen
+      console.log('[toggleFullscreen] In browser fullscreen only - attempting to dispatch F11');
       window.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'F11',
         code: 'F11',
@@ -84,6 +87,7 @@
       }));
     } else {
       // Not in any fullscreen, enter API fullscreen
+      console.log('[toggleFullscreen] Not in fullscreen - entering API fullscreen');
       appRoot.requestFullscreen().catch(err => {
         console.error('Fullscreen request failed:', err);
       });
