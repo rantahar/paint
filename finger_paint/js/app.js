@@ -254,22 +254,26 @@
     const r = layout.bottomRow;
     const B = layout.B;
 
-    // Upload (col 0)
-    makeBtn({
-      x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-      onTap: handleUploadTap,
-      innerHTML: FP.icon('upload', B * 0.44),
-      ariaLabel: 'Upload background',
-    });
+    // Upload (col 0) — disabled in fullscreen to prevent file dialogs breaking out
+    if (!state.isFullscreen) {
+      makeBtn({
+        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+        onTap: handleUploadTap,
+        innerHTML: FP.icon('upload', B * 0.44),
+        ariaLabel: 'Upload background',
+      });
+    }
 
-    // Save / Download-All (col 1)
-    makeBtn({
-      x: r.saveXY.x, y: r.saveXY.y, size: B,
-      accent: true,
-      onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
-      ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
-    });
+    // Save / Download-All (col 1) — disabled in fullscreen to prevent file dialogs breaking out
+    if (!state.isFullscreen) {
+      makeBtn({
+        x: r.saveXY.x, y: r.saveXY.y, size: B,
+        accent: true,
+        onTap: handleSaveOrDownloadAll,
+        innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
+        ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
+      });
+    }
 
     // Scroll arrows (if overflow)
     if (r.hasOverflow) {
@@ -319,22 +323,26 @@
       ariaLabel: 'Clear drawing',
     });
 
-    // Save / Download-All
-    makeBtn({
-      x: r.saveXY.x, y: r.saveXY.y, size: B,
-      accent: true,
-      onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
-      ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
-    });
+    // Save / Download-All — disabled in fullscreen to prevent file dialogs breaking out
+    if (!state.isFullscreen) {
+      makeBtn({
+        x: r.saveXY.x, y: r.saveXY.y, size: B,
+        accent: true,
+        onTap: handleSaveOrDownloadAll,
+        innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
+        ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
+      });
+    }
 
-    // Upload (bottom)
-    makeBtn({
-      x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-      onTap: handleUploadTap,
-      innerHTML: FP.icon('upload', B * 0.44),
-      ariaLabel: 'Upload background',
-    });
+    // Upload (bottom) — disabled in fullscreen to prevent file dialogs breaking out
+    if (!state.isFullscreen) {
+      makeBtn({
+        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+        onTap: handleUploadTap,
+        innerHTML: FP.icon('upload', B * 0.44),
+        ariaLabel: 'Upload background',
+      });
+    }
 
     // Scroll arrows
     if (r.hasOverflow) {
