@@ -43,6 +43,7 @@
     saved:          [],                       // from storage, most-recent first
     scrollOffset:   0,                        // index of first visible thumbnail
     loadedDrawingId: null,                    // currently loaded saved drawing (id) — flipped to null on any change
+    loadedDrawingPng: null,                   // PNG data of currently loaded drawing — used for download
     savedJustNow:   false,                    // toggled true after Save; false on any change
     frameMode:      true,                     // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
     isFullscreen:   false,                    // actual fullscreen via F11/Ctrl+F
@@ -496,7 +497,9 @@
       // Download mode — ask which
       const choice = await FP.dialogs.downloadDrawings(state.saved.length);
       if (choice === 'one') {
-        FP.storage.downloadOne(state.saved[0]);
+        // Download the loaded drawing (if one is loaded) or the most recent save
+        const pngToDownload = state.loadedDrawingPng || state.saved[0]?.png;
+        if (pngToDownload) _downloadPng(pngToDownload);
         FP.playSound('saveDrawing');
       } else if (choice === 'all') {
         FP.storage.downloadAll();
@@ -505,6 +508,13 @@
     } else {
       doSave();
     }
+  }
+
+  function _downloadPng(pngDataUrl) {
+    const a = document.getElementById('download-anchor');
+    a.href = pngDataUrl;
+    a.download = `painting-${new Date().toISOString().slice(0, 10)}.png`;
+    a.click();
   }
 
   function doSave() {
@@ -527,6 +537,7 @@
       FP.storage.remove(entry.id);
       state.saved = FP.storage.list();
       state.loadedDrawingId = null;
+      state.savedJustNow    = false;
       enableBtn('save');  // canvas now has no saved copy — allow saving in fullscreen
       // Clamp scrollOffset
       state.scrollOffset = Math.max(0, Math.min(
@@ -544,6 +555,7 @@
       await canvasComp.pageFlip(async () => {
         await canvasComp.loadCompositeFromDataUrl(entry.png);
         state.loadedDrawingId = entry.id;
+        state.loadedDrawingPng = entry.png;
         state.savedJustNow    = false;
         // Do NOT re-enable save — loaded drawing is already saved
       });
@@ -653,7 +665,11 @@
       enableBtn('save');  // re-enable save button if it was disabled in fullscreen
       needsRender = true;
     }
-    if (state.loadedDrawingId)   { state.loadedDrawingId = null;   needsRender = true; }
+    if (state.loadedDrawingId) {
+      state.loadedDrawingId = null;
+      state.loadedDrawingPng = null;
+      needsRender = true;
+    }
     if (needsRender) renderAll();
   }
 })();
