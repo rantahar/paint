@@ -264,16 +264,15 @@
       });
     }
 
-    // Save / Download-All (col 1) — disabled in fullscreen to prevent file dialogs breaking out
-    if (!state.isFullscreen) {
-      makeBtn({
-        x: r.saveXY.x, y: r.saveXY.y, size: B,
-        accent: true,
-        onTap: handleSaveOrDownloadAll,
-        innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
-        ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
-      });
-    }
+    // Save / Download-All (col 1) — always show save, but prevent download toggle in fullscreen
+    const showDownloadIcon = state.savedJustNow && !state.isFullscreen;
+    makeBtn({
+      x: r.saveXY.x, y: r.saveXY.y, size: B,
+      accent: true,
+      onTap: handleSaveOrDownloadAll,
+      innerHTML: FP.icon(showDownloadIcon ? 'download' : 'save', B * 0.44),
+      ariaLabel: showDownloadIcon ? 'Download all' : 'Save drawing',
+    });
 
     // Scroll arrows (if overflow)
     if (r.hasOverflow) {
@@ -323,16 +322,15 @@
       ariaLabel: 'Clear drawing',
     });
 
-    // Save / Download-All — disabled in fullscreen to prevent file dialogs breaking out
-    if (!state.isFullscreen) {
-      makeBtn({
-        x: r.saveXY.x, y: r.saveXY.y, size: B,
-        accent: true,
-        onTap: handleSaveOrDownloadAll,
-        innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
-        ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
-      });
-    }
+    // Save / Download-All — always show save, but prevent download toggle in fullscreen
+    const showDownloadIcon = state.savedJustNow && !state.isFullscreen;
+    makeBtn({
+      x: r.saveXY.x, y: r.saveXY.y, size: B,
+      accent: true,
+      onTap: handleSaveOrDownloadAll,
+      innerHTML: FP.icon(showDownloadIcon ? 'download' : 'save', B * 0.44),
+      ariaLabel: showDownloadIcon ? 'Download all' : 'Save drawing',
+    });
 
     // Upload (bottom) — disabled in fullscreen to prevent file dialogs breaking out
     if (!state.isFullscreen) {
@@ -482,7 +480,8 @@
   }
 
   function handleSaveOrDownloadAll() {
-    if (state.savedJustNow) {
+    // In fullscreen, always save (never download)
+    if (state.savedJustNow && !state.isFullscreen) {
       // Download-All mode
       FP.storage.downloadAll();
       FP.playSound('saveDrawing');
