@@ -248,7 +248,7 @@ body.dialog-open .btn {
 /* Fullscreen hint toast */
 .fullscreen-hint {
   position: fixed;
-  top: 0;
+  top: 8px;
   left: 50%;
   transform: translateX(-50%);
   background: #3e3e3e;
