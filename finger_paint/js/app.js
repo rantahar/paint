@@ -46,6 +46,7 @@
     savedJustNow:   false,                    // toggled true after Save; false on any change
     frameMode:      true,                     // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
     isFullscreen:   false,                    // actual fullscreen via F11/Ctrl+F
+    disabledButtons: new Set(),               // button IDs to disable (e.g., 'upload', 'download' in fullscreen)
   };
 
   // Rendered references
@@ -60,6 +61,7 @@
     if (!document.fullscreenElement) {
       appRoot.requestFullscreen().then(() => {
         state.isFullscreen = true;
+        disableBtn('upload');
         renderAll();
       }).catch(err => {
         console.error('Fullscreen request failed:', err);
@@ -67,9 +69,18 @@
     } else {
       document.exitFullscreen().then(() => {
         state.isFullscreen = false;
+        enableBtn('upload');
         renderAll();
       });
     }
+  }
+
+  function disableBtn(id) {
+    state.disabledButtons.add(id);
+  }
+
+  function enableBtn(id) {
+    state.disabledButtons.delete(id);
   }
 
   // ── Boot ──────────────────────────────────────────────────────
@@ -261,6 +272,7 @@
       onTap: handleUploadTap,
       innerHTML: FP.icon('upload', B * 0.44),
       ariaLabel: 'Upload background',
+      disabled: state.disabledButtons.has('upload'),
     });
 
     // Save / Download-All (col 1)
@@ -335,6 +347,7 @@
       onTap: handleUploadTap,
       innerHTML: FP.icon('upload', B * 0.44),
       ariaLabel: 'Upload background',
+      disabled: state.disabledButtons.has('upload'),
     });
 
     // Scroll arrows
@@ -389,13 +402,14 @@
   }
 
   // Generic button factory — appended to buttonLayer.
-  function makeBtn({ x, y, size, bg, color, active, accent, indicator,
+  function makeBtn({ x, y, size, bg, color, active, accent, indicator, disabled,
                      onTap, innerHTML, ariaLabel, extraClass }) {
     const b = document.createElement('button');
     b.className = 'btn';
     if (active)    b.classList.add('active');
     if (accent)    b.classList.add('accent');
     if (indicator) b.classList.add('indicator');
+    if (disabled)  b.classList.add('disabled');
     if (color && LIGHT_COLORS.has(color)) b.classList.add('light-color');
     if (extraClass) b.classList.add(extraClass);
     if (ariaLabel)  b.setAttribute('aria-label', ariaLabel);
@@ -409,7 +423,7 @@
     });
     if (bg) b.style.background = bg;
     if (innerHTML) b.innerHTML = innerHTML;
-    if (onTap) b.addEventListener('click', onTap);
+    if (onTap && !disabled) b.addEventListener('click', onTap);
     buttonLayer.appendChild(b);
     return b;
   }
@@ -474,11 +488,17 @@
     });
   }
 
-  function handleSaveOrDownloadAll() {
+  async function handleSaveOrDownloadAll() {
     if (state.savedJustNow && !state.isFullscreen) {
-      // Download-All mode (only outside fullscreen)
-      FP.storage.downloadAll();
-      FP.playSound('saveDrawing');
+      // Download mode — ask which
+      const choice = await FP.dialogs.downloadDrawings(state.saved.length);
+      if (choice === 'one') {
+        FP.storage.downloadOne(state.saved[0]);
+        FP.playSound('saveDrawing');
+      } else if (choice === 'all') {
+        FP.storage.downloadAll();
+        FP.playSound('saveDrawing');
+      }
     } else {
       doSave();
     }
@@ -489,6 +509,7 @@
     FP.storage.add(png);
     state.saved = FP.storage.list();
     state.savedJustNow = true;
+    state.scrollOffset = 0;  // scroll to show new drawing at front
     FP.playSound('saveDrawing');
     renderAll();
   }

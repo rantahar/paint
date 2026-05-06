@@ -130,6 +130,22 @@ FP.dialogs = {
       ],
     });
   },
+
+  downloadDrawings(savedCount) {
+    return this.confirm({
+      title: 'Download drawings',
+      message: savedCount > 1
+        ? `You have ${savedCount} saved drawings.`
+        : 'You have 1 saved drawing.',
+      choices: [
+        { label: 'This one', value: 'one',
+          kind: 'primary', icon: 'download' },
+        savedCount > 1 && { label: 'Download all', value: 'all',
+          kind: 'primary', icon: 'download' },
+        { label: 'Cancel',             value: 'cancel', icon: 'cancel' },
+      ].filter(Boolean),
+    });
+  },
 };
 
 function _escape(s) {
