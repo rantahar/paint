@@ -289,8 +289,8 @@
         active = (state.activeBrushId === t.id);
       } else if (t.kind === 'sizeIndicator') {
         indicator = true;
-        const dotPx = _sizeDotPx(layout.B, state.sizeIdx, layout.canvas.width);
-        inner = `<div class="size-dot" style="width:${dotPx}px;height:${dotPx}px;"></div>`;
+        const dotPercent = _sizeDotPercent(state.sizeIdx, layout.canvas.width);
+        inner = `<div class="size-dot" style="width:${dotPercent}%;height:${dotPercent}%;"></div>`;
       } else {
         // sizeUp / sizeDown / bgFill
         inner = FP.icon(t.id, layout.B * 0.44);
@@ -478,26 +478,72 @@
     if (innerHTML) b.innerHTML = innerHTML;
     if (onTap && !disabled) {
       b.addEventListener('pointerdown', (e) => {
-        // Track that this pointer started on a button (for tap-drag to canvas)
-        state.pointerDownOnButton.add(e.pointerId);
+        // Prevent default button behavior and click event that might interfere with dialogs
+        e.preventDefault();
+        e.stopPropagation();
         onTap(e);
+
+        // Set pointer capture so we track the full drag even if it moves off the button
+        try {
+          b.setPointerCapture(e.pointerId);
+          state.pointerDownOnButton.add(e.pointerId);
+
+          // Track pointermove on button to detect when pointer moves to canvas
+          const onButtonMove = (me) => {
+            if (!state.pointerDownOnButton.has(me.pointerId)) return;
+            const canvasRect = canvasComp?.wrapEl?.getBoundingClientRect?.();
+            if (!canvasRect) return;
+
+            // Check if pointer moved into canvas area
+            const isInCanvas = me.clientX >= canvasRect.left && me.clientX < canvasRect.right &&
+                               me.clientY >= canvasRect.top && me.clientY < canvasRect.bottom;
+            if (isInCanvas && !canvasComp.activeStrokes.has(me.pointerId)) {
+              // Dispatch to canvas to start stroke
+              canvasComp.drawCanvas.dispatchEvent(new PointerEvent('pointerdown', {
+                bubbles: true,
+                cancelable: true,
+                clientX: me.clientX,
+                clientY: me.clientY,
+                pointerId: me.pointerId,
+                isPrimary: me.isPrimary,
+                pressure: me.pressure
+              }));
+              state.pointerDownOnButton.delete(me.pointerId);
+              b.removeEventListener('pointermove', onButtonMove);
+              b.removeEventListener('pointerup', onButtonUp);
+            }
+          };
+
+          const onButtonUp = (ue) => {
+            state.pointerDownOnButton.delete(ue.pointerId);
+            b.removeEventListener('pointermove', onButtonMove);
+            b.removeEventListener('pointerup', onButtonUp);
+            try { b.releasePointerCapture(ue.pointerId); } catch (_) {}
+          };
+
+          b.addEventListener('pointermove', onButtonMove);
+          b.addEventListener('pointerup', onButtonUp);
+        } catch (_) {
+          // setPointerCapture failed, clean up
+          state.pointerDownOnButton.delete(e.pointerId);
+        }
       });
     }
     buttonLayer.appendChild(b);
     return b;
   }
 
-  function _sizeDotPx(B, sizeIdx, canvasWidth) {
+  function _sizeDotPercent(sizeIdx, canvasWidth) {
     // Calculate what the stroke looks like on the actual canvas
     const lineWidth = SIZE_LEVELS[sizeIdx] * 2;  // brushes use size*2 as lineWidth
     const visibleStrokeWidth = lineWidth * (canvasWidth / 1000);  // scale to canvas pixels
 
-    // Show preview at button scale with visibility multiplier
-    // This keeps the preview proportional to both brush size and canvas size
-    const dotPx = visibleStrokeWidth * (B / canvasWidth) * 5;
+    // Express preview as percentage of canvas width (scales automatically with button)
+    // Multiply by 50 so it's visible on the button without being huge
+    const percent = (visibleStrokeWidth / canvasWidth) * 100 * 50;
 
-    // Clamp to sensible range so it's always visible
-    return Math.max(2, Math.min(B * 0.95, dotPx));
+    // Clamp to sensible range (5% to 90% of button size)
+    return Math.max(5, Math.min(90, percent));
   }
 
   // ── Handlers ──────────────────────────────────────────────────
