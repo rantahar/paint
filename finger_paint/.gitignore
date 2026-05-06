@@ -1,0 +1,19 @@
+# Claude Code editor
+.claude/
+CLAUDE.md
+design_handoff/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (not used, but standard)
+node_modules/
+npm-debug.log
