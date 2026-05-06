@@ -64,11 +64,14 @@
            Math.abs(window.innerHeight - screen.height) < 2;
   }
 
+  let userRequestedExit = false;  // Track if user pressed Ctrl+F to exit (even if browser fullscreen still on)
   function toggleFullscreen() {
     if (document.fullscreenElement) {
       // Exit API fullscreen if active
+      userRequestedExit = true;
       document.exitFullscreen();
     } else {
+      userRequestedExit = false;
       // Enter API fullscreen (works independently of browser fullscreen from F11)
       appRoot.requestFullscreen().catch(err => {
         console.error('Fullscreen request failed:', err);
@@ -134,8 +137,24 @@
     appRoot.focus();
 
     // Track fullscreen state changes — handles both Fullscreen API (Ctrl+F) and browser fullscreen (F11)
+    let lastApiFullscreenChange = 0;  // Timestamp of last API fullscreen change, to prevent re-entry loops
     function updateFullscreenState() {
-      const entering = !!document.fullscreenElement || isBrowserFullscreen();
+      const inApiFullscreen = !!document.fullscreenElement;
+      const inBrowserFullscreen = isBrowserFullscreen();
+
+      // Keep API fullscreen in sync with browser fullscreen to unify the states
+      // If browser is fullscreen but API isn't, auto-enter API fullscreen
+      // (but not immediately after API fullscreen was exited to prevent re-entry loops)
+      const timeSinceLastChange = Date.now() - lastApiFullscreenChange;
+      if (inBrowserFullscreen && !inApiFullscreen && timeSinceLastChange > 100 && !userRequestedExit) {
+        appRoot.requestFullscreen().catch(() => {
+          // Ignore errors; may happen if already exiting fullscreen
+        });
+        return;  // Wait for fullscreenchange event to update state
+      }
+
+      // If user pressed Ctrl+F to exit, respect that even if browser fullscreen is still on
+      const entering = userRequestedExit ? false : (inApiFullscreen || inBrowserFullscreen);
 
       if (entering !== state.isFullscreen) {
         state.isFullscreen = entering;
@@ -150,7 +169,13 @@
       }
     }
 
-    document.addEventListener('fullscreenchange', updateFullscreenState);
+    function onFullscreenChange() {
+      lastApiFullscreenChange = Date.now();
+      updateFullscreenState();
+      userRequestedExit = false;  // Clear flag after processing
+    }
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
     window.addEventListener('resize', updateFullscreenState);
 
     // Keyboard handling: capture phase to intercept before browser defaults
