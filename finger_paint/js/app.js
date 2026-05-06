@@ -58,14 +58,26 @@
   let lastLayout  = null;
 
   // ── Fullscreen ────────────────────────────────────────────────
+  function isBrowserFullscreen() {
+    // Browser fullscreen (F11): window dimensions match screen dimensions (within 1 pixel tolerance)
+    return Math.abs(window.innerWidth - screen.width) < 2 &&
+           Math.abs(window.innerHeight - screen.height) < 2;
+  }
+
   function toggleFullscreen() {
-    if (!document.fullscreenElement) {
+    const inApiFullscreen = !!document.fullscreenElement;
+    const inBrowserFullscreen = isBrowserFullscreen();
+
+    if (inApiFullscreen) {
+      // Exit API fullscreen if active
+      document.exitFullscreen();
+    } else if (!inBrowserFullscreen) {
+      // Only enter API fullscreen if not already in browser fullscreen (F11)
       appRoot.requestFullscreen().catch(err => {
         console.error('Fullscreen request failed:', err);
       });
-    } else {
-      document.exitFullscreen();
     }
+    // If only in browser fullscreen, Ctrl+F does nothing (user must press F11 to exit)
   }
 
   function disableBtn(id) {
@@ -127,12 +139,7 @@
 
     // Track fullscreen state changes — handles both Fullscreen API (Ctrl+F) and browser fullscreen (F11)
     function updateFullscreenState() {
-      // Check Fullscreen API (Ctrl+F)
-      const apiFullscreen = !!document.fullscreenElement;
-      // Check browser fullscreen (F11): window dimensions match screen dimensions (within 1 pixel tolerance)
-      const browserFullscreen = Math.abs(window.innerWidth - screen.width) < 2 &&
-                               Math.abs(window.innerHeight - screen.height) < 2;
-      const entering = apiFullscreen || browserFullscreen;
+      const entering = !!document.fullscreenElement || isBrowserFullscreen();
 
       if (entering !== state.isFullscreen) {
         state.isFullscreen = entering;
