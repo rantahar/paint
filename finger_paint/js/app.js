@@ -480,13 +480,11 @@
   }
 
   async function handleClearTap() {
-    const choice = await FP.dialogs.clearDrawing();
-    if (choice === 'cancel' || choice == null) return;
-    if (choice === 'save') {
-      doSave();
-      // After saving, ALSO clear (per intuitive flow — user wanted to save first)
+    if (canvasComp.dirtySinceLoad) {
+      const choice = await FP.dialogs.clearDrawing();
+      if (choice === 'cancel' || choice == null) return;
+      if (choice === 'save') doSave();
     }
-    // Page-flip animation around the actual clear
     await canvasComp.pageFlip(async () => {
       canvasComp.reset();
       onCanvasContentChanged();

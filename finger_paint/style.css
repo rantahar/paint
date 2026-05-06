@@ -105,6 +105,10 @@ html, body {
   pointer-events: none;
 }
 
+body.dialog-open .btn {
+  pointer-events: none !important;
+}
+
 .btn.thumb { padding: 0; }
 .btn.thumb img,
 .btn.thumb canvas {

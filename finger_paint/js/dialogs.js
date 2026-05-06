@@ -70,6 +70,7 @@ FP.dialogs = {
       dlg.appendChild(row);
       back.appendChild(dlg);
       document.body.appendChild(back);
+      document.body.classList.add('dialog-open');
 
       // Shift focus into dialog so Enter activates dialog buttons, not the triggering toolbar button
       const firstFocusable = row.querySelector('.primary') || row.querySelector('.dialog-btn');
@@ -91,6 +92,9 @@ FP.dialogs = {
         document.removeEventListener('keydown', onKey);
         FP.playSound('dialogClose');
         back.remove();
+        if (!document.querySelector('.dialog-backdrop')) {
+          document.body.classList.remove('dialog-open');
+        }
         resolve(value);
       }
     });
