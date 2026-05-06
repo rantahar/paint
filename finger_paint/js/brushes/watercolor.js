@@ -15,6 +15,8 @@
     id:       'watercolor',
     label:    'Watercolor',
     iconName: 'watercolor',
+    // _stamp uses radius = size * 1.6 → diameter = size * 3.2
+    strokeScale: 3.2,
 
     sounds: {
       select:     function () { /* play 'water-select.wav' */ },

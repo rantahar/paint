@@ -22,6 +22,9 @@
     id:       'crayon',
     label:    'Crayon',
     iconName: 'crayon',
+    // grain stamps are scattered within radius * GRAIN_JITTER * 1.2 + dotR;
+    // nominal "footprint" diameter is ~size*2 (matches marker visually)
+    strokeScale: 2,
 
     sounds: {
       select:     function () { /* play 'crayon-select.wav' */ },

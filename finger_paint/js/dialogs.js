@@ -64,7 +64,16 @@ FP.dialogs = {
         } else {
           b.textContent = c.label;
         }
-        b.addEventListener('click', () => close(c.value));
+        // Use pointerdown (not click) so a synthesized click from the
+        // touchend that *opened* the dialog can't immediately close it.
+        // A new pointerdown requires the user to lift and press again.
+        b.addEventListener('pointerdown', e => {
+          e.preventDefault();
+          e.stopPropagation();
+          close(c.value);
+        });
+        // Also swallow the synthesized click that may follow on touch.
+        b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
         row.appendChild(b);
       });
       dlg.appendChild(row);
@@ -79,9 +88,19 @@ FP.dialogs = {
       const firstFocusable = row.querySelector('.primary') || row.querySelector('.dialog-btn');
       if (firstFocusable) requestAnimationFrame(() => firstFocusable.focus());
 
-      // Backdrop click → cancel (counts as null, never a choice)
+      // Backdrop dismiss on a NEW pointerdown (not click). This avoids the
+      // synthesized click from the toolbar tap that opened us — that touch's
+      // pointerup lands on the backdrop because the backdrop now covers the
+      // button, and a click event would otherwise immediately close the dialog.
+      back.addEventListener('pointerdown', e => {
+        if (e.target === back) {
+          e.preventDefault();
+          close(null);
+        }
+      });
+      // Swallow the synthesized click that follows the opening touchend.
       back.addEventListener('click', e => {
-        if (e.target === back) close(null);
+        if (e.target === back) { e.preventDefault(); e.stopPropagation(); }
       });
 
       const onKey = e => {

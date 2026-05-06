@@ -494,23 +494,26 @@
   }
 
   function _sizeDotPercent(sizeIdx, canvasWidth, buttonSize) {
-    // Brushes treat opts.size as a RADIUS (marker uses arc(r=size) and lineWidth=size*2).
-    // So painted stroke DIAMETER in painting units = size * 2.
-    // Convert to CSS pixels via the canvas display scale (canvasWidth / 1000).
-    const currentSize    = SIZE_LEVELS[sizeIdx];
-    const strokeCssPx    = currentSize * 2 * (canvasWidth / 1000);
+    // Each brush sets `strokeScale` = (painted diameter) / (size). Defaults to 2
+    // (the marker convention) if a brush forgot to declare one.
+    const brush = FP.brushes[state.activeBrushId];
+    const scale = (brush && typeof brush.strokeScale === 'number') ? brush.strokeScale : 2;
 
-    // Preview dot lives inside a .btn with `box-sizing: border-box` and 2px borders,
-    // so the child's % is taken from the content area = buttonSize - 4.
+    const currentSize  = SIZE_LEVELS[sizeIdx];
+    const strokeCssPx  = currentSize * scale * (canvasWidth / 1000);
+
+    // .btn has `box-sizing: border-box` with a 2px border on each side, so the
+    // child's `width: N%` is taken from the content area = buttonSize - 4.
     const innerSize = Math.max(1, buttonSize - 4);
     let percent = (strokeCssPx / innerSize) * 100;
 
-    // Clamp so the dot stays inside the button (border + padding leave ~10% buffer).
-    percent = Math.max(8, Math.min(90, percent));
+    // Cap so the dot doesn't overflow the button visually.
+    percent = Math.max(6, Math.min(95, percent));
 
-    console.log('[_sizeDotPercent] sizeIdx:', sizeIdx, 'currentSize(radius):', currentSize,
-                'canvasWidth:', canvasWidth, 'buttonSize:', buttonSize,
-                'strokeCssPx(diameter):', strokeCssPx.toFixed(2),
+    console.log('[_sizeDotPercent] brush:', state.activeBrushId, 'scale:', scale,
+                'sizeIdx:', sizeIdx, 'sizeRadius:', currentSize,
+                'canvasW:', canvasWidth, 'btnSize:', buttonSize,
+                'strokeDiameterCssPx:', strokeCssPx.toFixed(2),
                 'percent:', percent.toFixed(2));
     return percent;
   }

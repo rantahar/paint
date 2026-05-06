@@ -14,6 +14,8 @@
     id:       'eraser',
     label:    'Eraser',
     iconName: 'eraser',
+    // lineWidth = size * 2.5 → effective diameter = size * 2.5
+    strokeScale: 2.5,
 
     sounds: {
       select:     function () { /* play 'eraser-select.wav' */ },
