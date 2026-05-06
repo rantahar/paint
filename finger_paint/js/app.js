@@ -73,12 +73,12 @@
       document.exitFullscreen();
     } else if (inBrowserFullscreen) {
       // In browser fullscreen (F11) but not API fullscreen
-      // Exit by dispatching Escape key, which exits fullscreen in most browsers
-      document.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Escape',
-        code: 'Escape',
-        keyCode: 27,
-        which: 27,
+      // Exit by dispatching F11 key to toggle browser fullscreen
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'F11',
+        code: 'F11',
+        keyCode: 122,
+        which: 122,
         bubbles: true,
         cancelable: true
       }));
