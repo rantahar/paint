@@ -264,14 +264,13 @@
       disabled: state.isFullscreen,
     });
 
-    // Save / Download (col 1) — button toggles icon, download state is disabled (grayscale)
+    // Save / Download-All (col 1)
     makeBtn({
       x: r.saveXY.x, y: r.saveXY.y, size: B,
       accent: true,
       onTap: handleSaveOrDownloadAll,
       innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
       ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
-      disabled: state.savedJustNow,  // download button is disabled (grayscale)
     });
 
     // Scroll arrows (if overflow)
@@ -322,14 +321,13 @@
       ariaLabel: 'Clear drawing',
     });
 
-    // Save / Download — button toggles icon, download state is disabled (grayscale)
+    // Save / Download-All
     makeBtn({
       x: r.saveXY.x, y: r.saveXY.y, size: B,
       accent: true,
       onTap: handleSaveOrDownloadAll,
       innerHTML: FP.icon(state.savedJustNow ? 'download' : 'save', B * 0.44),
       ariaLabel: state.savedJustNow ? 'Download all' : 'Save drawing',
-      disabled: state.savedJustNow,  // download button is disabled (grayscale)
     });
 
     // Upload (bottom) — disabled in fullscreen to prevent file dialogs breaking out
@@ -480,7 +478,13 @@
   }
 
   function handleSaveOrDownloadAll() {
-    doSave();
+    if (state.savedJustNow && !state.isFullscreen) {
+      // Download-All mode (only outside fullscreen)
+      FP.storage.downloadAll();
+      FP.playSound('saveDrawing');
+    } else {
+      doSave();
+    }
   }
 
   function doSave() {
