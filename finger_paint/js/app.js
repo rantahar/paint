@@ -48,6 +48,7 @@
     frameMode:      true,                     // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
     isFullscreen:   false,                    // actual fullscreen via F11/Ctrl+F
     disabledButtons: new Set(),               // button IDs to disable (e.g., 'upload', 'download' in fullscreen)
+    pointerDownOnButton: new Set(),           // tracks pointerIds that had pointerdown on buttons (for tap-drag to canvas)
   };
 
   // Rendered references
@@ -288,7 +289,7 @@
         active = (state.activeBrushId === t.id);
       } else if (t.kind === 'sizeIndicator') {
         indicator = true;
-        const dotPx = _sizeDotPx(layout.B, state.sizeIdx);
+        const dotPx = _sizeDotPx(layout.B, state.sizeIdx, layout.canvas.width);
         inner = `<div class="size-dot" style="width:${dotPx}px;height:${dotPx}px;"></div>`;
       } else {
         // sizeUp / sizeDown / bgFill
@@ -475,16 +476,28 @@
     });
     if (bg) b.style.background = bg;
     if (innerHTML) b.innerHTML = innerHTML;
-    if (onTap && !disabled) b.addEventListener('pointerdown', onTap);
+    if (onTap && !disabled) {
+      b.addEventListener('pointerdown', (e) => {
+        // Track that this pointer started on a button (for tap-drag to canvas)
+        state.pointerDownOnButton.add(e.pointerId);
+        onTap(e);
+      });
+    }
     buttonLayer.appendChild(b);
     return b;
   }
 
-  function _sizeDotPx(B, sizeIdx) {
-    const minD = B * 0.10, maxD = B * 0.78;
-    const minSize = SIZE_LEVELS[0], maxSize = SIZE_LEVELS[SIZE_LEVELS.length - 1];
-    const t = (SIZE_LEVELS[sizeIdx] - minSize) / (maxSize - minSize);
-    return minD + (maxD - minD) * t;
+  function _sizeDotPx(B, sizeIdx, canvasWidth) {
+    // Calculate what the stroke looks like on the actual canvas
+    const lineWidth = SIZE_LEVELS[sizeIdx] * 2;  // brushes use size*2 as lineWidth
+    const visibleStrokeWidth = lineWidth * (canvasWidth / 1000);  // scale to canvas pixels
+
+    // Show preview at button scale with visibility multiplier
+    // This keeps the preview proportional to both brush size and canvas size
+    const dotPx = visibleStrokeWidth * (B / canvasWidth) * 5;
+
+    // Clamp to sensible range so it's always visible
+    return Math.max(2, Math.min(B * 0.95, dotPx));
   }
 
   // ── Handlers ──────────────────────────────────────────────────

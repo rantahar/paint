@@ -251,14 +251,23 @@ FP.PaintingCanvas = class {
   }
 
   _onMove(e) {
-    if (!this.activeStrokes.has(e.pointerId)) return;
+    let stroke = this.activeStrokes.get(e.pointerId);
+
+    // If stroke hasn't started but pointer came from a button, start it now
+    if (!stroke && FP && FP.state && FP.state.pointerDownOnButton.has(e.pointerId)) {
+      this._onDown(e);
+      stroke = this.activeStrokes.get(e.pointerId);
+      if (!stroke) return;  // failed to start stroke
+      FP.state.pointerDownOnButton.delete(e.pointerId);
+    }
+
+    if (!stroke) return;
     e.preventDefault();
 
     // coalesced events for high-frequency move data
     const events = (typeof e.getCoalescedEvents === 'function')
       ? e.getCoalescedEvents()
       : [e];
-    const stroke = this.activeStrokes.get(e.pointerId);
 
     for (const ev of events) {
       const pt = this._eventToCanvas(ev);
@@ -270,6 +279,12 @@ FP.PaintingCanvas = class {
 
   _onUp(e) {
     const stroke = this.activeStrokes.get(e.pointerId);
+
+    // Clean up button tracking
+    if (FP && FP.state) {
+      FP.state.pointerDownOnButton.delete(e.pointerId);
+    }
+
     if (!stroke) return;
     e.preventDefault();
 
