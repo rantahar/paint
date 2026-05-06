@@ -244,3 +244,44 @@ body.dialog-open .btn {
 
 /* Hidden during page flip */
 .hidden-during-flip { visibility: hidden; }
+
+/* Fullscreen hint toast */
+.fullscreen-hint {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #3e3e3e;
+  color: #ffffff;
+  padding: 12px 20px;
+  border-radius: 0 0 8px 8px;
+  font-size: 14px;
+  z-index: 10000;
+  animation: slideDown 200ms ease-out;
+  pointer-events: none;
+}
+
+.fullscreen-hint kbd {
+  background: #5a5a5a;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 0.9em;
+  margin: 0 3px;
+  display: inline-block;
+}
+
+.fullscreen-hint.fade-out {
+  animation: fadeOut 300ms ease-out forwards;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}

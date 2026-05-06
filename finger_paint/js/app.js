@@ -64,6 +64,24 @@
            Math.abs(window.innerHeight - screen.height) < 2;
   }
 
+  function showFullscreenHint() {
+    // Remove any existing hint
+    const existing = document.querySelector('.fullscreen-hint');
+    if (existing) existing.remove();
+
+    // Create hint element
+    const hint = document.createElement('div');
+    hint.className = 'fullscreen-hint';
+    hint.innerHTML = 'To exit full screen, press <kbd>F11</kbd> or press and hold <kbd>Esc</kbd>';
+    document.body.appendChild(hint);
+
+    // Remove after 3 seconds
+    setTimeout(() => {
+      hint.classList.add('fade-out');
+      setTimeout(() => hint.remove(), 300);
+    }, 3000);
+  }
+
   function toggleFullscreen() {
     const inApiFullscreen = !!document.fullscreenElement;
     const inBrowserFullscreen = isBrowserFullscreen();
@@ -76,21 +94,9 @@
       document.exitFullscreen();
     } else if (inBrowserFullscreen) {
       // In browser fullscreen (F11) but not API fullscreen
-      console.log('[toggleFullscreen] In browser fullscreen only - attempting held Escape');
-      const escapeKeyEvent = (type) => new KeyboardEvent(type, {
-        key: 'Escape',
-        code: 'Escape',
-        keyCode: 27,
-        which: 27,
-        bubbles: true,
-        cancelable: true
-      });
-      document.dispatchEvent(escapeKeyEvent('keydown'));
-      console.log('[toggleFullscreen] Escape keydown dispatched, waiting 5 seconds...');
-      setTimeout(() => {
-        document.dispatchEvent(escapeKeyEvent('keyup'));
-        console.log('[toggleFullscreen] Escape keyup dispatched');
-      }, 5000);
+      // Show hint message since we can't exit programmatically
+      console.log('[toggleFullscreen] In browser fullscreen only - showing hint');
+      showFullscreenHint();
     } else {
       // Not in any fullscreen, enter API fullscreen
       console.log('[toggleFullscreen] Not in fullscreen - entering API fullscreen');
