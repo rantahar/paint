@@ -98,13 +98,6 @@ html, body {
 .btn.accent { background: #ffe4b5; }
 .btn.indicator { background: #f0eeea; }
 
-.btn.disabled {
-  filter: grayscale(100%);
-  opacity: 0.6;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
 .btn.thumb { padding: 0; }
 .btn.thumb img,
 .btn.thumb canvas {
