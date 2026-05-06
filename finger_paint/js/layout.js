@@ -103,12 +103,13 @@ function _landscape(frameW, frameH, nSaved) {
   const thumbXs = [];
   for (let i = 0; i < maxVisible; i++) thumbXs.push(colX(thumbStartCol + i));
 
-  // Canvas: from col 2 left edge to (numCols-1) col left edge, full height
+  // Canvas: from col 2 left edge, stopping at the right panel's left border
+  // and at the bottom panel's top border (so the canvas doesn't bleed into toolbar areas).
   const canvas = {
     left:   colX(2),
     top:    0,
-    width:  colX(numCols - 1) - colX(2),
-    height: frameH,
+    width:  colX(numCols - 1) - G - colX(2),
+    height: bottomY - G,
   };
 
   // Translucent panel backgrounds (so toolbars read against the canvas).
@@ -198,12 +199,14 @@ function _portrait(frameW, frameH, nSaved) {
     thumbYs.push(rowY(thumbRowSpan.lastRow - i)); // i=0 → bottom-most
   }
 
-  // Canvas: left=0, top below top tool row, right at col 8 left edge, bottom = frameH (overflows behind colors)
+  // Canvas: left=0, top below top tool row, right at right panel's left border,
+  // bottom at bottom color panel's top border (no bleed into toolbar areas).
+  const canvasTop = rowY(0) + B + G;
   const canvas = {
     left:   0,
-    top:    rowY(0) + B + G,
-    width:  colX(8) - 0,
-    height: frameH - (rowY(0) + B + G),
+    top:    canvasTop,
+    width:  colX(8) - G,
+    height: primaryRowY - G - canvasTop,
   };
 
   const panels = [

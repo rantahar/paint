@@ -35,9 +35,10 @@ html, body {
 
 .painting canvas {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   width: 100%;
-  height: 100%;
+  /* height set by JS to maintain backing aspect ratio */
   display: block;
   touch-action: none;
   pointer-events: auto;
