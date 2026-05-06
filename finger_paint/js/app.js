@@ -475,14 +475,15 @@
     });
     if (bg) b.style.background = bg;
     if (innerHTML) b.innerHTML = innerHTML;
-    if (onTap && !disabled) b.addEventListener('click', onTap);
+    if (onTap && !disabled) b.addEventListener('pointerdown', onTap);
     buttonLayer.appendChild(b);
     return b;
   }
 
   function _sizeDotPx(B, sizeIdx) {
     const minD = B * 0.10, maxD = B * 0.78;
-    const t = sizeIdx / (SIZE_LEVELS.length - 1);
+    const minSize = SIZE_LEVELS[0], maxSize = SIZE_LEVELS[SIZE_LEVELS.length - 1];
+    const t = (SIZE_LEVELS[sizeIdx] - minSize) / (maxSize - minSize);
     return minD + (maxD - minD) * t;
   }
 
@@ -522,7 +523,11 @@
   function handleBgFillTap() {
     const c = state.palette[state.activeColorIdx];
     canvasComp.fillBackground(c);
+    // Auto-switch to opposite column color (flip LSB)
+    state.activeColorIdx = state.activeColorIdx ^ 1;
+    canvasComp.setColor(state.palette[state.activeColorIdx]);
     onCanvasContentChanged();
+    renderAll();
     FP.playSound('bgFill');
   }
 
