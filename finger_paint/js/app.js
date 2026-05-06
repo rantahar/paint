@@ -479,6 +479,7 @@
     if (onTap && !disabled) {
       b.addEventListener('pointerdown', (e) => {
         // Track that this pointer started on a button (for tap-drag to canvas)
+        console.log('[makeBtn pointerdown]', ariaLabel || 'button', 'pointerId:', e.pointerId);
         state.pointerDownOnButton.add(e.pointerId);
         // Prevent default button behavior that might interfere with dialogs
         e.preventDefault();
@@ -490,15 +491,25 @@
   }
 
   function _sizeDotPercent(sizeIdx, canvasWidth) {
-    // Map brush sizes to button percentages
-    // Small sizes (4) → 10%, large sizes (72) → 85%
-    const minSize = SIZE_LEVELS[0];      // 4
-    const maxSize = SIZE_LEVELS[SIZE_LEVELS.length - 1];  // 72
+    // Scale painting units to CSS pixels, then to button percentage
+    // Painted stroke size in CSS pixels = size_in_painting_units * (canvasWidth / 1000)
     const currentSize = SIZE_LEVELS[sizeIdx];
+    const strokeCssPixels = currentSize * (canvasWidth / 1000);
 
+    // Now calculate what percentage of the button (layout.B) this represents
+    // We don't have layout.B directly, but buttons are ~8-10% of canvas height
+    // Instead: find what the stroke would be at max size, use that to bound the percentage
+    const maxSize = SIZE_LEVELS[SIZE_LEVELS.length - 1];  // 72
+    const maxStrokeCssPixels = maxSize * (canvasWidth / 1000);
+
+    // Map: 0px → 10%, maxStrokeCssPixels → 85%
+    // But cap the minimum at 10% for visibility (don't go below 10%)
     const minPercent = 10, maxPercent = 85;
-    const t = (currentSize - minSize) / (maxSize - minSize);
-    return minPercent + (maxPercent - minPercent) * t;
+    const percentForMaxStroke = maxPercent;  // 85% for the largest brush
+    const percent = Math.max(minPercent, (strokeCssPixels / maxStrokeCssPixels) * percentForMaxStroke);
+
+    console.log('[_sizeDotPercent] sizeIdx:', sizeIdx, 'currentSize:', currentSize, 'canvasWidth:', canvasWidth, 'strokeCssPixels:', strokeCssPixels, 'percent:', percent);
+    return percent;
   }
 
   // ── Handlers ──────────────────────────────────────────────────
@@ -535,10 +546,13 @@
   }
 
   function handleBgFillTap() {
+    const oldIdx = state.activeColorIdx;
     const c = state.palette[state.activeColorIdx];
+    console.log('[handleBgFillTap] Filling background with color:', c, 'at index:', oldIdx);
     canvasComp.fillBackground(c);
     // Auto-switch to opposite column color (flip LSB)
     state.activeColorIdx = state.activeColorIdx ^ 1;
+    console.log('[handleBgFillTap] Switched color from index', oldIdx, 'to', state.activeColorIdx, '=', state.palette[state.activeColorIdx]);
     canvasComp.setColor(state.palette[state.activeColorIdx]);
     onCanvasContentChanged();
     renderAll();
