@@ -116,35 +116,48 @@
       window.visualViewport.addEventListener('resize', () => renderAll());
     }
 
+    // Ensure app has focus to receive keyboard events
+    appRoot.setAttribute('tabindex', '0');
+    appRoot.focus();
+
     // Track fullscreen state changes (user may exit via ESC or other means)
     document.addEventListener('fullscreenchange', () => {
       state.isFullscreen = !!document.fullscreenElement;
       renderAll();
     });
 
-    // Keyboard handling: only capture in fullscreen mode (keyboard-cat-safe kiosk)
+    // Keyboard handling: capture phase to intercept before browser defaults
+    // Ctrl+G and Ctrl+F work in both modes; other keys only captured in fullscreen
     document.addEventListener('keydown', (e) => {
-      if (!state.isFullscreen) return;
-
-      const isCtrlG = (e.ctrlKey || e.metaKey) && e.key === 'g';
-      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key === 'f';
+      const isCtrlG = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'g';
+      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'f';
 
       if (isCtrlG) {
         e.preventDefault();
         state.frameMode = !state.frameMode;
         renderAll();
+        return;
       } else if (isCtrlF) {
         e.preventDefault();
         toggleFullscreen();
-      } else {
-        e.preventDefault();
+        return;
       }
-    });
-    document.addEventListener('keyup', (e) => {
+
+      // In fullscreen mode, capture all other keys
       if (state.isFullscreen) {
         e.preventDefault();
       }
-    });
+    }, true);  // capture phase
+
+    document.addEventListener('keyup', (e) => {
+      const isCtrlG = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'g';
+      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'f';
+
+      // Prevent default for Ctrl+G/F in both modes, and all keys in fullscreen
+      if (isCtrlG || isCtrlF || state.isFullscreen) {
+        e.preventDefault();
+      }
+    }, true);  // capture phase
   }
 
   // ── Render ────────────────────────────────────────────────────
