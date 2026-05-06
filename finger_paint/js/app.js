@@ -65,19 +65,15 @@
   }
 
   function toggleFullscreen() {
-    const inApiFullscreen = !!document.fullscreenElement;
-    const inBrowserFullscreen = isBrowserFullscreen();
-
-    if (inApiFullscreen) {
+    if (document.fullscreenElement) {
       // Exit API fullscreen if active
       document.exitFullscreen();
-    } else if (!inBrowserFullscreen) {
-      // Only enter API fullscreen if not already in browser fullscreen (F11)
+    } else {
+      // Enter API fullscreen (works independently of browser fullscreen from F11)
       appRoot.requestFullscreen().catch(err => {
         console.error('Fullscreen request failed:', err);
       });
     }
-    // If only in browser fullscreen, Ctrl+F does nothing (user must press F11 to exit)
   }
 
   function disableBtn(id) {
