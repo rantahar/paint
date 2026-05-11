@@ -1,0 +1,6 @@
+{
+  "pages": [
+    { "file": "circle-and-square.svg", "name": "Circle And Square" },
+    { "file": "star-and-moon.svg", "name": "Star And Moon" }
+  ]
+}

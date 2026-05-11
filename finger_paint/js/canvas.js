@@ -15,6 +15,17 @@
 
    Coordinate mapping: pointer client coords → painting units via
    isotropic scale (PAINTING_W / cssWidth), same scale for both axes.
+
+   TODO: investigate vector-stroke storage as an alternative to raster
+   PNGs. Current brushes (crayon grain, watercolor blend, eraser
+   destination-out) are rendered as stamped raster ops; replaying them
+   would require each brush to expose a deterministic "render from
+   recorded events + seed" path. Vector storage would unlock:
+     • Undo/redo via stroke replay (vs. canvas snapshots)
+     • Resolution-independent re-rendering
+     • Smaller localStorage footprint for stroke-heavy drawings
+   Simpler interim: snapshot-based undo (one ImageData per stroke,
+   capped ring buffer ≈ 10 entries → ~4-40 MB depending on canvas H).
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
 
@@ -137,6 +148,57 @@ FP.PaintingCanvas = class {
     } catch (_) { /* tainted canvas — skip */ }
   }
 
+  /**
+   * Two-layer load. Restores bg + draw to their original layers without
+   * flattening. `drawUrl` may be null/falsy for entries that have no
+   * strokes layer (e.g. v1 migrated entries).
+   */
+  loadLayersFromDataUrls(bgUrl, drawUrl) {
+    const loadOne = (src) => new Promise((resolve, reject) => {
+      if (!src) { resolve(null); return; }
+      const im = new Image();
+      im.onload  = () => resolve(im);
+      im.onerror = reject;
+      im.src = src;
+    });
+    return Promise.all([loadOne(bgUrl), loadOne(drawUrl)]).then(([bgImg, drawImg]) => {
+      if (!bgImg) {
+        // Nothing to load — leave canvas alone.
+        return;
+      }
+      const bgH    = Math.round(bgImg.naturalHeight / bgImg.naturalWidth * PAINTING_W);
+      const drawH  = drawImg
+        ? Math.round(drawImg.naturalHeight / drawImg.naturalWidth * PAINTING_W)
+        : 0;
+      const targetH = Math.max(bgH, drawH);
+      this._bgImageH = bgH;
+      this._resizeCanvas(targetH);
+
+      // Background layer
+      this.bgCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+      this.bgCtx.drawImage(bgImg, 0, 0, PAINTING_W, bgH);
+      if (this._paintingH > bgH) {
+        this.bgCtx.save();
+        this.bgCtx.fillStyle = '#ffffff';
+        this.bgCtx.fillRect(0, bgH, PAINTING_W, this._paintingH - bgH);
+        this.bgCtx.restore();
+      }
+
+      // Drawing layer
+      this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+      if (drawImg) {
+        this.drawCtx.drawImage(drawImg, 0, 0, PAINTING_W, drawH);
+      }
+
+      try {
+        const sample = this.bgCtx.getImageData(2, 2, 1, 1).data;
+        this.wrapEl.style.background = `rgb(${sample[0]},${sample[1]},${sample[2]})`;
+      } catch (_) { /* tainted canvas — skip */ }
+
+      this._setDirty(false);
+    });
+  }
+
   /** Replaces both layers — drawing wiped, image becomes background. */
   loadCompositeFromDataUrl(dataUrl) {
     return new Promise((resolve, reject) => {
@@ -189,6 +251,26 @@ FP.PaintingCanvas = class {
   }
 
   // ── Output ──────────────────────────────────────────────────
+  /** Background layer only, cropped to content extent. PNG data URL. */
+  toBackgroundDataURL() {
+    const saveH = this._computeSaveHeight();
+    const out = document.createElement('canvas');
+    out.width  = PAINTING_W;
+    out.height = saveH;
+    out.getContext('2d').drawImage(this.bgCanvas, 0, 0);
+    return out.toDataURL('image/png');
+  }
+
+  /** Drawing layer only (transparent), cropped to content extent. PNG data URL. */
+  toDrawingDataURL() {
+    const saveH = this._computeSaveHeight();
+    const out = document.createElement('canvas');
+    out.width  = PAINTING_W;
+    out.height = saveH;
+    out.getContext('2d').drawImage(this.drawCanvas, 0, 0);
+    return out.toDataURL('image/png');
+  }
+
   /** Composite both layers, cropped to content extent. Returns PNG data URL. */
   toCompositeDataURL() {
     const saveH = this._computeSaveHeight();

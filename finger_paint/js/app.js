@@ -44,12 +44,19 @@
     saved:          [],                       // from storage, most-recent first
     scrollOffset:   0,                        // index of first visible thumbnail
     loadedDrawingId: null,                    // currently loaded saved drawing (id) — flipped to null on any change
-    loadedDrawingPng: null,                   // PNG data of currently loaded drawing — used for download
+    loadedDrawingEntry: null,                 // the full saved-drawing entry (bg/draw/thumb) — used to recompose for download
     savedJustNow:   false,                    // toggled true after Save; false on any change
     frameMode:      CFG.frameMode !== undefined ? CFG.frameMode : true,  // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
     isFullscreen:   false,                    // actual fullscreen via F11/Ctrl+F
     disabledButtons: new Set(),               // button IDs to disable (e.g., 'upload', 'download' in fullscreen)
     pointerDownOnButton: new Set(),           // tracks pointerIds that had pointerdown on buttons (for tap-drag to canvas)
+
+    // Coloring-book state
+    coloringBookOpen:        false,           // strip rendered in place of save bar
+    currentColoringPageId:   null,            // page currently loaded on canvas (if any)
+    coloringScrollOffset:    0,
+    coloringConfirmReloadId: null,            // page whose slot is showing "reload" confirm
+    coloringPages:           [],              // discovered pages (from coloringBook.discover())
   };
 
   // Expose state so canvas.js (and any other FP module) can read pointerDownOnButton
@@ -146,6 +153,14 @@
     state.saved = FP.storage.list();
 
     if (CFG.toolOrder) FP.toolOrder = CFG.toolOrder;
+
+    // Discover coloring pages and migrate any orphaned autosaves
+    // (autosaves whose source PNG is no longer in coloring-pages/).
+    FP.coloringBook.discover().then(pages => {
+      state.coloringPages = pages;
+      migrateOrphanedColoringAutosaves(pages);
+      renderAll();
+    }).catch(err => console.warn('coloringBook discover failed', err));
 
     // First render
     renderAll();
@@ -319,16 +334,26 @@
   function renderBottomRow(layout) {
     const r = layout.bottomRow;
     const B = layout.B;
+    const bookToggleVisible = _bookToggleVisible();
 
-    if (!CFG.clearOnly) {
-      // Upload (col 0)
-      makeBtn({
-        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-        onTap: handleUploadTap,
-        innerHTML: FP.icon('upload', B * 0.44),
-        ariaLabel: 'Upload background',
-        disabled: state.disabledButtons.has('upload'),
-      });
+    if (state.coloringBookOpen) {
+      // Strip mode: book toggle at col 0, coloring strip across the middle,
+      // clear at the rightmost col. Save/upload/regular thumbs hidden.
+      _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: true });
+      _renderColoringStripLandscape(layout);
+    } else if (!CFG.clearOnly) {
+      // Upload (col 0) — or book toggle if fullscreen
+      if (bookToggleVisible) {
+        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
+      } else {
+        makeBtn({
+          x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+          onTap: handleUploadTap,
+          innerHTML: FP.icon('upload', B * 0.44),
+          ariaLabel: 'Upload background',
+          disabled: state.disabledButtons.has('upload'),
+        });
+      }
 
       // Save / Download-All (col 1)
       // In fullscreen: always show save, disable when already saved (no re-saving, no download)
@@ -366,6 +391,11 @@
         if (x == null) return;
         renderThumb(entry, x, r.uploadXY.y, B);
       });
+    } else {
+      // clearOnly (crayon mode), strip closed: just the book toggle.
+      if (bookToggleVisible) {
+        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
+      }
     }
 
     // Clear (rightmost)
@@ -381,6 +411,7 @@
   function renderRightCol(layout) {
     const r = layout.rightCol;
     const B = layout.B;
+    const bookToggleVisible = _bookToggleVisible();
 
     // Clear (top)
     makeBtn({
@@ -391,7 +422,10 @@
       ariaLabel: 'Clear drawing',
     });
 
-    if (!CFG.clearOnly) {
+    if (state.coloringBookOpen) {
+      _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: true });
+      _renderColoringStripPortrait(layout);
+    } else if (!CFG.clearOnly) {
       // Save / Download-All
       const showDl = state.savedJustNow && !state.isFullscreen;
       makeBtn({
@@ -403,14 +437,18 @@
         disabled: state.disabledButtons.has('save'),
       });
 
-      // Upload (bottom)
-      makeBtn({
-        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-        onTap: handleUploadTap,
-        innerHTML: FP.icon('upload', B * 0.44),
-        ariaLabel: 'Upload background',
-        disabled: state.disabledButtons.has('upload'),
-      });
+      // Upload (bottom) — or book toggle if fullscreen
+      if (bookToggleVisible) {
+        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
+      } else {
+        makeBtn({
+          x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+          onTap: handleUploadTap,
+          innerHTML: FP.icon('upload', B * 0.44),
+          ariaLabel: 'Upload background',
+          disabled: state.disabledButtons.has('upload'),
+        });
+      }
 
       // Scroll arrows — up (near Clear) shows older; down (near Save) shows newer
       if (r.hasOverflow) {
@@ -436,7 +474,155 @@
         if (y == null) return;
         renderThumb(entry, r.uploadXY.x, y, B);
       });
+    } else {
+      // clearOnly (crayon mode), strip closed: just the book toggle.
+      if (bookToggleVisible) {
+        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
+      }
     }
+  }
+
+  function _bookToggleVisible() {
+    // Visible whenever there are pages to choose from AND:
+    //   • crayon mode (always)
+    //   • fullscreen (replaces upload, which is disabled there)
+    //   • the strip is currently open
+    if (state.coloringBookOpen) return state.coloringPages.length > 0;
+    if (state.coloringPages.length === 0) return false;
+    return CFG.clearOnly || state.isFullscreen;
+  }
+
+  function _renderBookToggle({ x, y, size, active }) {
+    makeBtn({
+      x, y, size,
+      active,
+      onTap: handleColoringBookToggleTap,
+      innerHTML: FP.icon('book', size * 0.44),
+      ariaLabel: active ? 'Close coloring book' : 'Open coloring book',
+    });
+  }
+
+  /**
+   * Coloring strip layout for landscape: cols 1..numCols-2 inclusive.
+   * Total slots = numCols - 2. With overflow we reserve cols 1 and
+   * numCols-2 for scroll arrows; thumbs occupy cols 2..numCols-3.
+   */
+  function _renderColoringStripLandscape(layout) {
+    const G = layout.G, B = layout.B, n = layout.numCols;
+    const colX = (c) => G + c * (B + G);
+    const y = layout.bottomRow.y;
+    const totalSlots = Math.max(0, n - 2);
+    const pages = state.coloringPages;
+
+    let maxVisible, firstThumbCol, hasOverflow;
+    if (pages.length <= totalSlots) {
+      hasOverflow   = false;
+      maxVisible    = totalSlots;
+      firstThumbCol = 1;
+    } else {
+      hasOverflow   = true;
+      maxVisible    = Math.max(0, totalSlots - 2);
+      firstThumbCol = 2;
+    }
+
+    if (hasOverflow) {
+      makeBtn({
+        x: colX(1), y, size: B,
+        onTap: () => scrollColoring(-1),
+        innerHTML: FP.icon('scrollLeft', B * 0.44),
+        ariaLabel: 'Scroll coloring pages left',
+      });
+      makeBtn({
+        x: colX(n - 2), y, size: B,
+        onTap: () => scrollColoring(+1),
+        innerHTML: FP.icon('scrollRight', B * 0.44),
+        ariaLabel: 'Scroll coloring pages right',
+      });
+    }
+
+    const visible = pages.slice(state.coloringScrollOffset,
+                                 state.coloringScrollOffset + maxVisible);
+    visible.forEach((page, i) => {
+      renderColoringThumb(page, colX(firstThumbCol + i), y, B);
+    });
+  }
+
+  /**
+   * Coloring strip for portrait: rows 1..numRows-2 inclusive.
+   * Total slots = numRows - 2. With overflow we reserve rows 1 and
+   * numRows-2 for scroll arrows; thumbs in rows 2..numRows-3.
+   * thumb[0] is most-recent at the BOTTOM (matching saved-strip ordering).
+   */
+  function _renderColoringStripPortrait(layout) {
+    const G = layout.G, B = layout.B, n = layout.numRows;
+    const rowY = (r) => G + r * (B + G);
+    const x = layout.rightCol.x;
+    const totalSlots = Math.max(0, n - 2);
+    const pages = state.coloringPages;
+
+    let maxVisible, firstThumbRow, lastThumbRow, hasOverflow;
+    if (pages.length <= totalSlots) {
+      hasOverflow   = false;
+      maxVisible    = totalSlots;
+      firstThumbRow = 1;
+      lastThumbRow  = n - 2;
+    } else {
+      hasOverflow   = true;
+      maxVisible    = Math.max(0, totalSlots - 2);
+      firstThumbRow = 2;
+      lastThumbRow  = n - 3;
+    }
+
+    if (hasOverflow) {
+      makeBtn({
+        x, y: rowY(1), size: B,
+        onTap: () => scrollColoring(+1),
+        innerHTML: FP.icon('scrollUp', B * 0.44),
+        ariaLabel: 'Scroll coloring pages up',
+      });
+      makeBtn({
+        x, y: rowY(n - 2), size: B,
+        onTap: () => scrollColoring(-1),
+        innerHTML: FP.icon('scrollDown', B * 0.44),
+        ariaLabel: 'Scroll coloring pages down',
+      });
+    }
+
+    // Display newest-first at the top (consistent with how the page list is ordered).
+    // We're not matching the saved-strip's bottom-newest order here because
+    // coloring pages don't have a "newest" — they're a stable catalog.
+    const visible = pages.slice(state.coloringScrollOffset,
+                                 state.coloringScrollOffset + maxVisible);
+    visible.forEach((page, i) => {
+      renderColoringThumb(page, x, rowY(firstThumbRow + i), B);
+    });
+  }
+
+  function renderColoringThumb(page, x, y, B) {
+    if (state.coloringConfirmReloadId === page.id) {
+      // Replace this slot with the reload button (second-tap confirm).
+      makeBtn({
+        x, y, size: B, accent: true,
+        onTap: () => handleColoringPageReloadConfirm(page),
+        innerHTML: FP.icon('reload', B * 0.44),
+        ariaLabel: 'Reload page (clear all your work)',
+      });
+      return;
+    }
+    const btn = makeBtn({
+      x, y, size: B,
+      active: state.currentColoringPageId === page.id,
+      onTap: () => handleColoringPageTap(page),
+      ariaLabel: page.name,
+      extraClass: 'thumb',
+    });
+    // Prefer the autosaved thumbnail (shows the user's painted state on the
+    // page) if present; otherwise show the unmodified source image.
+    const autosave = FP.coloringBook.getAutosave(page.id);
+    const img = document.createElement('img');
+    img.src = (autosave && autosave.thumb) || page.url;
+    img.alt = '';
+    btn.appendChild(img);
   }
 
   function renderThumb(entry, x, y, B) {
@@ -458,7 +644,9 @@
         extraClass: 'thumb',
       });
       const img = document.createElement('img');
-      img.src = entry.png;
+      // v2 entries have a dedicated thumb; v1 legacy entries store the
+      // composite under `png` (the v1→v2 read-shim sets thumb = png).
+      img.src = entry.thumb || entry.png;
       img.alt = '';
       btn.appendChild(img);
     }
@@ -550,6 +738,7 @@
   }
 
   function handleBgFillTap() {
+    _leavingColoringPage();
     const c = state.palette[state.activeColorIdx];
     canvasComp.fillBackground(c);
     // Auto-switch to opposite column color (flip LSB)
@@ -561,6 +750,17 @@
   }
 
   async function handleClearTap() {
+    // If a coloring page is loaded, the user's work is autosaved per-page;
+    // clearing means "leave this page and return to blank paper" — no
+    // confirmation dialog because nothing is lost.
+    if (state.currentColoringPageId) {
+      _leavingColoringPage();
+      await canvasComp.pageFlip(async () => {
+        canvasComp.reset();
+        onCanvasContentChanged();
+      });
+      return;
+    }
     if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
       const choice = await FP.dialogs.clearDrawing();
       if (choice === 'cancel' || choice == null) return;
@@ -577,9 +777,13 @@
       // Download mode — ask which
       const choice = await FP.dialogs.downloadDrawings(state.saved.length);
       if (choice === 'one') {
-        // Download the loaded drawing (if one is loaded) or the most recent save
-        const pngToDownload = state.loadedDrawingPng || state.saved[0]?.png;
-        if (pngToDownload) _downloadPng(pngToDownload);
+        // Prefer the loaded entry's composite (covers v1 png and v2 layers);
+        // fall back to the most recent save (already flattened on the fly).
+        const target = state.loadedDrawingEntry || state.saved[0];
+        if (target) {
+          const png = await FP.storage.compositeFromEntry(target);
+          _downloadPng(png);
+        }
         FP.playSound('saveDrawing');
       } else if (choice === 'all') {
         FP.storage.downloadAll();
@@ -598,8 +802,10 @@
   }
 
   function doSave() {
-    const png = canvasComp.toCompositeDataURL();
-    FP.storage.add(png);
+    const bg    = canvasComp.toBackgroundDataURL();
+    const draw  = canvasComp.toDrawingDataURL();
+    const thumb = canvasComp.toThumbnailDataURL();
+    FP.storage.add(bg, draw, thumb);
     state.saved = FP.storage.list();
     state.savedJustNow = true;
     state.scrollOffset = 0;  // scroll to show new drawing at front
@@ -617,6 +823,7 @@
       FP.storage.remove(entry.id);
       state.saved = FP.storage.list();
       state.loadedDrawingId = null;
+      state.loadedDrawingEntry = null;
       state.savedJustNow    = false;
       enableBtn('save');  // canvas now has no saved copy — allow saving in fullscreen
       // Clamp scrollOffset
@@ -625,22 +832,34 @@
       FP.playSound('deleteDrawing');
       renderAll();
     } else {
-      // Warn if unsaved changes would be lost
-      if (canvasComp.dirtySinceLoad) {
+      // Coloring-page work is autosaved per-page — leaving doesn't lose work,
+      // so suppress the dirty dialog when we're inside a coloring page.
+      if (state.currentColoringPageId) {
+        _leavingColoringPage();
+      } else if (canvasComp.dirtySinceLoad) {
         const choice = await FP.dialogs.loadWithDirty();
         if (choice === 'cancel' || choice == null) return;
         if (choice === 'save') doSave();
       }
       // Load this drawing onto the canvas (with page flip)
       await canvasComp.pageFlip(async () => {
-        await canvasComp.loadCompositeFromDataUrl(entry.png);
+        await _loadSavedEntry(entry);
         state.loadedDrawingId = entry.id;
-        state.loadedDrawingPng = entry.png;
+        state.loadedDrawingEntry = entry;
         state.savedJustNow    = true;  // show download button for the loaded drawing
         // Do NOT re-enable save button — loaded drawing is already saved
       });
       renderAll();
     }
+  }
+
+  // Loads a saved entry (v1 png or v2 bg+draw) onto the canvas.
+  function _loadSavedEntry(entry) {
+    if (entry.png) {
+      // legacy v1 shape — composite, no separate draw layer
+      return canvasComp.loadCompositeFromDataUrl(entry.png);
+    }
+    return canvasComp.loadLayersFromDataUrls(entry.bg, entry.draw);
   }
 
   function scrollSaved(direction) {
@@ -661,6 +880,9 @@
     const file = e.target.files && e.target.files[0];
     e.target.value = '';                 // allow re-selecting the same file
     if (!file) return;
+
+    // Uploading a background means leaving the coloring page; autosave first.
+    _leavingColoringPage();
 
     const dataUrl = await _fileToDataUrl(file);
     const newImg  = await _loadImage(dataUrl);
@@ -733,7 +955,18 @@
 
   // ── Dirty / saved flag plumbing ───────────────────────────────
   function onDirtyChange(dirty) {
-    if (dirty) onCanvasContentChanged();
+    if (dirty) {
+      // In crayon mode the strip occupies the full bottom area; auto-collapse
+      // it the moment the user starts drawing so the canvas isn't covered.
+      if (CFG.clearOnly && state.coloringBookOpen) {
+        state.coloringBookOpen = false;
+        state.coloringConfirmReloadId = null;
+      }
+      // Drawing onto a coloring page is the normal flow — do NOT clear
+      // currentColoringPageId here (only handled in onCanvasContentChanged,
+      // which itself only fires when savedJustNow or loadedDrawingId flip).
+      onCanvasContentChanged();
+    }
   }
 
   function onCanvasContentChanged() {
@@ -747,9 +980,145 @@
     }
     if (state.loadedDrawingId) {
       state.loadedDrawingId = null;
-      state.loadedDrawingPng = null;
+      state.loadedDrawingEntry = null;
       needsRender = true;
     }
     if (needsRender) renderAll();
+  }
+
+  // ── Coloring book handlers ────────────────────────────────────
+  function handleColoringBookToggleTap() {
+    state.coloringBookOpen = !state.coloringBookOpen;
+    state.coloringConfirmReloadId = null;
+    if (state.coloringBookOpen) {
+      // Clamp scroll into valid range any time we open.
+      state.coloringScrollOffset = Math.max(0, Math.min(
+        state.coloringScrollOffset,
+        Math.max(0, state.coloringPages.length - 1)));
+    }
+    FP.playSound('dialogOpen');
+    renderAll();
+  }
+
+  async function handleColoringPageTap(page) {
+    // A different slot was tapped → cancel any pending reload-confirm.
+    if (state.coloringConfirmReloadId && state.coloringConfirmReloadId !== page.id) {
+      state.coloringConfirmReloadId = null;
+    }
+    if (state.currentColoringPageId === page.id) {
+      // Second tap on the loaded page → arm the reload confirm.
+      state.coloringConfirmReloadId = page.id;
+      renderAll();
+      return;
+    }
+    if (state.currentColoringPageId) {
+      // Switching coloring pages — autosave the outgoing one silently.
+      autosaveCurrentColoringPage();
+      await loadColoringPage(page);
+      return;
+    }
+    // Coming from a non-coloring drawing: warn on unsaved changes (matches
+    // the saved-thumb flow), unless caller is in clearOnly mode where saving
+    // isn't an option.
+    if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
+      const choice = await FP.dialogs.loadWithDirty();
+      if (choice === 'cancel' || choice == null) return;
+      if (choice === 'save') doSave();
+    }
+    await loadColoringPage(page);
+  }
+
+  async function handleColoringPageReloadConfirm(page) {
+    state.coloringConfirmReloadId = null;
+    FP.coloringBook.removeAutosave(page.id);
+    await canvasComp.pageFlip(async () => {
+      const img = await FP.coloringBook.loadImage(page);
+      canvasComp.setBackgroundImage(img);
+      canvasComp.clearDrawing();
+    });
+    FP.playSound('deleteDrawing');
+    renderAll();
+  }
+
+  async function loadColoringPage(page) {
+    const autosave = FP.coloringBook.getAutosave(page.id);
+    await canvasComp.pageFlip(async () => {
+      if (autosave && autosave.bg) {
+        await canvasComp.loadLayersFromDataUrls(autosave.bg, autosave.draw);
+      } else {
+        const img = await FP.coloringBook.loadImage(page);
+        canvasComp.setBackgroundImage(img);
+        canvasComp.clearDrawing();
+      }
+      state.currentColoringPageId   = page.id;
+      state.coloringConfirmReloadId = null;
+      state.loadedDrawingId         = null;
+      state.loadedDrawingEntry      = null;
+      state.savedJustNow            = false;
+      enableBtn('save');
+    });
+    renderAll();
+  }
+
+  function autosaveCurrentColoringPage() {
+    if (!state.currentColoringPageId) return;
+    try {
+      const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
+      FP.coloringBook.setAutosave(state.currentColoringPageId, {
+        bg:    canvasComp.toBackgroundDataURL(),
+        draw:  canvasComp.toDrawingDataURL(),
+        thumb: canvasComp.toThumbnailDataURL(),
+        name:  page ? page.name : state.currentColoringPageId,
+      });
+    } catch (e) {
+      // Likely a tainted canvas (cross-origin source) — autosave is a best-effort.
+      console.warn('coloring autosave skipped', e);
+    }
+  }
+
+  function _leavingColoringPage() {
+    if (!state.currentColoringPageId) return;
+    autosaveCurrentColoringPage();
+    state.currentColoringPageId   = null;
+    state.coloringConfirmReloadId = null;
+  }
+
+  function scrollColoring(direction) {
+    const pages = state.coloringPages.length;
+    if (pages === 0 || !lastLayout) return;
+    // Determine how many fit in the strip given the current layout.
+    let totalSlots;
+    if (lastLayout.orientation === 'landscape') {
+      totalSlots = Math.max(0, lastLayout.numCols - 2);
+    } else {
+      totalSlots = Math.max(0, lastLayout.numRows - 2);
+    }
+    const visibleCount = (pages > totalSlots) ? Math.max(0, totalSlots - 2) : totalSlots;
+    const max = Math.max(0, pages - visibleCount);
+    state.coloringScrollOffset = Math.max(0, Math.min(max, state.coloringScrollOffset + direction));
+    FP.playSound('scroll');
+    renderAll();
+  }
+
+  // Migrates autosaves whose source file is no longer in coloring-pages/
+  // into the regular saved-drawings list. Runs once at boot after discover().
+  function migrateOrphanedColoringAutosaves(pages) {
+    const present = new Set(pages.map(p => p.id));
+    const ids = FP.coloringBook.allAutosaveIds();
+    let moved = 0;
+    for (const id of ids) {
+      if (present.has(id)) continue;
+      const entry = FP.coloringBook.getAutosave(id);
+      if (!entry || !entry.bg) {
+        FP.coloringBook.removeAutosave(id);
+        continue;
+      }
+      FP.storage.add(entry.bg, entry.draw, entry.thumb || entry.bg);
+      FP.coloringBook.removeAutosave(id);
+      moved++;
+    }
+    if (moved > 0) {
+      state.saved = FP.storage.list();
+    }
   }
 })();
