@@ -960,11 +960,13 @@
       // it the moment the user starts drawing so the canvas isn't covered.
       if (CFG.clearOnly && state.coloringBookOpen) {
         state.coloringBookOpen = false;
+      }
+      // Clear reload-confirm on any dirty draw (not just crayon mode).
+      // When the user draws, the page is no longer "clean" so the reload
+      // button should disappear and revert to the page thumbnail.
+      if (state.currentColoringPageId) {
         state.coloringConfirmReloadId = null;
       }
-      // Drawing onto a coloring page is the normal flow — do NOT clear
-      // currentColoringPageId here (only handled in onCanvasContentChanged,
-      // which itself only fires when savedJustNow or loadedDrawingId flip).
       onCanvasContentChanged();
     }
   }
