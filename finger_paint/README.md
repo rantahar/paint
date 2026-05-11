@@ -13,6 +13,17 @@ A simple, touch-friendly drawing app with multiple brushes, colors, and drawing 
 - **Responsive layout** that adapts to landscape and portrait orientations
 - **Page-flip animation** when clearing or loading drawings
 
+## Variants
+
+### Standard (`finger_paint/`)
+Full-featured drawing app with all brushes, size controls, save/load, and upload.
+
+### Crayon Mode (`finger_paint/crayon-mode/`)
+Simplified variant designed for quick, casual drawing:
+- Defaults to **floating-buttons mode** (canvas fills the full viewport)
+- Defaults to the **crayon brush**
+- Shows only **color swatches**, **set background color**, and **clear** — no save, upload, or brush/size controls
+
 ## Running Locally
 
 No build step required. The app is plain HTML/CSS/JavaScript.
@@ -21,10 +32,22 @@ No build step required. The app is plain HTML/CSS/JavaScript.
 ```bash
 python -m http.server 8765
 ```
-Then visit `http://localhost:8765/` in your browser.
+Then visit `http://localhost:8765/finger_paint/` (or `.../finger_paint/crayon-mode/`) in your browser.
 
 ### Option 2: Open directly
 Open `index.html` in a modern browser. Works from the `file://` protocol, though some features (image upload) work better when served over HTTP.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+,` | Decrease brush size |
+| `Ctrl+.` | Increase brush size |
+| `Ctrl+B` | Cycle brush type |
+| `Ctrl+Shift+↑` | Upload background image |
+| `Ctrl+Shift+↓` | Save / download drawing |
+| `Ctrl+G` | Toggle frame / floating-buttons mode |
+| `Ctrl+F` | Toggle fullscreen |
 
 ## Architecture
 
@@ -39,7 +62,6 @@ See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
 ## Not Yet Implemented
 
 - **Audio** — sound system is designed but awaiting audio assets
-- **Keyboard safety** — accidental keypresses can affect drawing
 - **Bar alignment** — toolbar edges don't perfectly align in all orientations
 
 ## Browser Support

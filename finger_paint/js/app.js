@@ -193,19 +193,43 @@
     window.addEventListener('resize', updateFullscreenState);
 
     // Keyboard handling: capture phase to intercept before browser defaults
-    // Ctrl+G and Ctrl+F work in both modes; other keys only captured in fullscreen
     document.addEventListener('keydown', (e) => {
-      const isCtrlG = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'g';
-      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'f';
+      const ctrl = e.ctrlKey || e.metaKey;
 
-      if (isCtrlG) {
+      if (ctrl && e.key?.toLowerCase() === 'g') {
         e.preventDefault();
         state.frameMode = !state.frameMode;
         renderAll();
         return;
-      } else if (isCtrlF) {
+      }
+      if (ctrl && e.key?.toLowerCase() === 'f') {
         e.preventDefault();
         toggleFullscreen();
+        return;
+      }
+      if (ctrl && e.key === ',') {
+        e.preventDefault();
+        changeSize(-1);
+        return;
+      }
+      if (ctrl && e.key === '.') {
+        e.preventDefault();
+        changeSize(+1);
+        return;
+      }
+      if (ctrl && !e.shiftKey && e.key?.toLowerCase() === 'b') {
+        e.preventDefault();
+        cycleBrush();
+        return;
+      }
+      if (ctrl && e.shiftKey && e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!state.disabledButtons.has('upload')) handleUploadTap();
+        return;
+      }
+      if (ctrl && e.shiftKey && e.key === 'ArrowDown') {
+        e.preventDefault();
+        handleSaveOrDownloadAll();
         return;
       }
 
@@ -216,11 +240,13 @@
     }, true);  // capture phase
 
     document.addEventListener('keyup', (e) => {
-      const isCtrlG = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'g';
-      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key?.toLowerCase() === 'f';
+      const ctrl = e.ctrlKey || e.metaKey;
+      const key = e.key?.toLowerCase();
 
-      // Prevent default for Ctrl+G/F in both modes, and all keys in fullscreen
-      if (isCtrlG || isCtrlF || state.isFullscreen) {
+      // Prevent default for all handled shortcuts in both modes, and all keys in fullscreen
+      if (ctrl && (key === 'g' || key === 'f' || e.key === ',' || e.key === '.' ||
+                   key === 'b' || e.key === 'ArrowUp' || e.key === 'ArrowDown') ||
+          state.isFullscreen) {
         e.preventDefault();
       }
     }, true);  // capture phase
@@ -546,6 +572,18 @@
     state.sizeIdx = next;
     canvasComp.setSize(SIZE_LEVELS[next]);
     FP.playSound('sizeChange', delta);
+    renderAll();
+  }
+
+  function cycleBrush() {
+    const fromOrder = FP.toolOrder.filter(t => t.kind === 'brush').map(t => t.id);
+    const brushIds = fromOrder.length > 0 ? fromOrder : Object.keys(FP.brushes);
+    if (brushIds.length === 0) return;
+    const cur = brushIds.indexOf(state.activeBrushId);
+    const next = brushIds[(cur + 1) % brushIds.length];
+    state.activeBrushId = next;
+    canvasComp.setBrush(FP.brushes[next]);
+    FP.playBrushSound(FP.brushes[next], 'select');
     renderAll();
   }
 
