@@ -576,7 +576,8 @@
   }
 
   function cycleBrush() {
-    const brushIds = FP.toolOrder.filter(t => t.kind === 'brush').map(t => t.id);
+    const fromOrder = FP.toolOrder.filter(t => t.kind === 'brush').map(t => t.id);
+    const brushIds = fromOrder.length > 0 ? fromOrder : Object.keys(FP.brushes);
     if (brushIds.length === 0) return;
     const cur = brushIds.indexOf(state.activeBrushId);
     const next = brushIds[(cur + 1) % brushIds.length];
