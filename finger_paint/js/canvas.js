@@ -335,12 +335,17 @@ FP.PaintingCanvas = class {
   _onMove(e) {
     let stroke = this.activeStrokes.get(e.pointerId);
 
-    // If stroke hasn't started but pointer came from a button, start it now
+    // If stroke hasn't started but pointer came from a (color) button, start it
+    // now — but only while the pointer is still pressed (mouse button held /
+    // finger still down). e.buttons === 0 means the press was released before
+    // the pointer reached the canvas, so we must NOT start drawing.
     if (!stroke && FP && FP.state && FP.state.pointerDownOnButton.has(e.pointerId)) {
-      this._onDown(e);
-      stroke = this.activeStrokes.get(e.pointerId);
-      if (!stroke) return;  // failed to start stroke
+      if (e.buttons > 0) {
+        this._onDown(e);
+        stroke = this.activeStrokes.get(e.pointerId);
+      }
       FP.state.pointerDownOnButton.delete(e.pointerId);
+      if (!stroke) return;
     }
 
     if (!stroke) return;

@@ -165,6 +165,13 @@
     // First render
     renderAll();
 
+    // Always clear pointer-on-button tracking when the pointer is released
+    // anywhere — otherwise releasing over a button (no drag) leaves a stale
+    // entry that would auto-start a stroke on a later hover.
+    const _clearPointerDown = (e) => state.pointerDownOnButton.delete(e.pointerId);
+    window.addEventListener('pointerup',     _clearPointerDown);
+    window.addEventListener('pointercancel', _clearPointerDown);
+
     // Resize handler (debounced via rAF)
     let raf = null;
     window.addEventListener('resize', () => {
@@ -292,6 +299,7 @@
       const btn = makeBtn({
         x: s.x, y: s.y, size: layout.B,
         bg: color, color, active: isActive,
+        isColorSwatch: true,
         onTap: () => handleColorTap(s.idx),
         ariaLabel: `Color ${s.idx + 1}`,
       });
@@ -654,7 +662,7 @@
 
   // Generic button factory — appended to buttonLayer.
   function makeBtn({ x, y, size, bg, color, active, accent, indicator, disabled,
-                     onTap, innerHTML, ariaLabel, extraClass }) {
+                     onTap, innerHTML, ariaLabel, extraClass, isColorSwatch }) {
     const b = document.createElement('button');
     b.className = 'btn';
     if (active)    b.classList.add('active');
@@ -676,8 +684,10 @@
     if (innerHTML) b.innerHTML = innerHTML;
     if (onTap && !disabled) {
       b.addEventListener('pointerdown', (e) => {
-        // Track that this pointer started on a button (for tap-drag to canvas)
-        state.pointerDownOnButton.add(e.pointerId);
+        // Only color swatches participate in tap-drag-to-canvas: dragging off
+        // a color button while still pressed starts a stroke in that color.
+        // Other buttons (tools, size, clear, etc.) must never start a stroke.
+        if (isColorSwatch) state.pointerDownOnButton.add(e.pointerId);
         // Prevent default button behavior that might interfere with dialogs
         e.preventDefault();
         onTap(e);
