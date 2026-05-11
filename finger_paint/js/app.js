@@ -10,6 +10,7 @@
 (function () {
   'use strict';
   window.FP = window.FP || {};
+  const CFG = window.FP_VARIANT || {};
 
   // ── Default palette (configurable later) ──────────────────────
   const DEFAULT_PALETTE = [
@@ -38,14 +39,14 @@
   const state = {
     palette:        DEFAULT_PALETTE.slice(),
     activeColorIdx: DEFAULT_COLOR_IDX,        // black
-    activeBrushId:  'marker',
+    activeBrushId:  CFG.activeBrushId || 'marker',
     sizeIdx:        DEFAULT_SIZE_IDX,
     saved:          [],                       // from storage, most-recent first
     scrollOffset:   0,                        // index of first visible thumbnail
     loadedDrawingId: null,                    // currently loaded saved drawing (id) — flipped to null on any change
     loadedDrawingPng: null,                   // PNG data of currently loaded drawing — used for download
     savedJustNow:   false,                    // toggled true after Save; false on any change
-    frameMode:      true,                     // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
+    frameMode:      CFG.frameMode !== undefined ? CFG.frameMode : true,  // true = Frame Mode (drawing inside toolbars), false = Expanded Mode (buttons hover)
     isFullscreen:   false,                    // actual fullscreen via F11/Ctrl+F
     disabledButtons: new Set(),               // button IDs to disable (e.g., 'upload', 'download' in fullscreen)
     pointerDownOnButton: new Set(),           // tracks pointerIds that had pointerdown on buttons (for tap-drag to canvas)
@@ -143,6 +144,8 @@
 
     // Load saved drawings
     state.saved = FP.storage.list();
+
+    if (CFG.toolOrder) FP.toolOrder = CFG.toolOrder;
 
     // First render
     renderAll();
@@ -317,51 +320,53 @@
     const r = layout.bottomRow;
     const B = layout.B;
 
-    // Upload (col 0)
-    makeBtn({
-      x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-      onTap: handleUploadTap,
-      innerHTML: FP.icon('upload', B * 0.44),
-      ariaLabel: 'Upload background',
-      disabled: state.disabledButtons.has('upload'),
-    });
-
-    // Save / Download-All (col 1)
-    // In fullscreen: always show save, disable when already saved (no re-saving, no download)
-    const showDl = state.savedJustNow && !state.isFullscreen;
-    makeBtn({
-      x: r.saveXY.x, y: r.saveXY.y, size: B,
-      accent: true,
-      onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
-      ariaLabel: showDl ? 'Download all' : 'Save drawing',
-      disabled: state.disabledButtons.has('save'),
-    });
-
-    // Scroll arrows (if overflow)
-    if (r.hasOverflow) {
+    if (!CFG.clearOnly) {
+      // Upload (col 0)
       makeBtn({
-        x: r.scrollLeftXY.x, y: r.scrollLeftXY.y, size: B,
-        onTap: () => scrollSaved(-1),
-        innerHTML: FP.icon('scrollLeft', B * 0.44),
-        ariaLabel: 'Scroll left',
+        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+        onTap: handleUploadTap,
+        innerHTML: FP.icon('upload', B * 0.44),
+        ariaLabel: 'Upload background',
+        disabled: state.disabledButtons.has('upload'),
       });
+
+      // Save / Download-All (col 1)
+      // In fullscreen: always show save, disable when already saved (no re-saving, no download)
+      const showDl = state.savedJustNow && !state.isFullscreen;
       makeBtn({
-        x: r.scrollRightXY.x, y: r.scrollRightXY.y, size: B,
-        onTap: () => scrollSaved(+1),
-        innerHTML: FP.icon('scrollRight', B * 0.44),
-        ariaLabel: 'Scroll right',
+        x: r.saveXY.x, y: r.saveXY.y, size: B,
+        accent: true,
+        onTap: handleSaveOrDownloadAll,
+        innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
+        ariaLabel: showDl ? 'Download all' : 'Save drawing',
+        disabled: state.disabledButtons.has('save'),
+      });
+
+      // Scroll arrows (if overflow)
+      if (r.hasOverflow) {
+        makeBtn({
+          x: r.scrollLeftXY.x, y: r.scrollLeftXY.y, size: B,
+          onTap: () => scrollSaved(-1),
+          innerHTML: FP.icon('scrollLeft', B * 0.44),
+          ariaLabel: 'Scroll left',
+        });
+        makeBtn({
+          x: r.scrollRightXY.x, y: r.scrollRightXY.y, size: B,
+          onTap: () => scrollSaved(+1),
+          innerHTML: FP.icon('scrollRight', B * 0.44),
+          ariaLabel: 'Scroll right',
+        });
+      }
+
+      // Thumbnails
+      const visibleSaved = state.saved.slice(state.scrollOffset,
+                                              state.scrollOffset + r.maxVisible);
+      visibleSaved.forEach((entry, i) => {
+        const x = r.thumbXs[i];
+        if (x == null) return;
+        renderThumb(entry, x, r.uploadXY.y, B);
       });
     }
-
-    // Thumbnails
-    const visibleSaved = state.saved.slice(state.scrollOffset,
-                                            state.scrollOffset + r.maxVisible);
-    visibleSaved.forEach((entry, i) => {
-      const x = r.thumbXs[i];
-      if (x == null) return;
-      renderThumb(entry, x, r.uploadXY.y, B);
-    });
 
     // Clear (rightmost)
     makeBtn({
@@ -386,50 +391,52 @@
       ariaLabel: 'Clear drawing',
     });
 
-    // Save / Download-All
-    const showDl = state.savedJustNow && !state.isFullscreen;
-    makeBtn({
-      x: r.saveXY.x, y: r.saveXY.y, size: B,
-      accent: true,
-      onTap: handleSaveOrDownloadAll,
-      innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
-      ariaLabel: showDl ? 'Download all' : 'Save drawing',
-      disabled: state.disabledButtons.has('save'),
-    });
-
-    // Upload (bottom)
-    makeBtn({
-      x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-      onTap: handleUploadTap,
-      innerHTML: FP.icon('upload', B * 0.44),
-      ariaLabel: 'Upload background',
-      disabled: state.disabledButtons.has('upload'),
-    });
-
-    // Scroll arrows — up (near Clear) shows older; down (near Save) shows newer
-    if (r.hasOverflow) {
+    if (!CFG.clearOnly) {
+      // Save / Download-All
+      const showDl = state.savedJustNow && !state.isFullscreen;
       makeBtn({
-        x: r.scrollUpXY.x, y: r.scrollUpXY.y, size: B,
-        onTap: () => scrollSaved(+1),
-        innerHTML: FP.icon('scrollUp', B * 0.44),
-        ariaLabel: 'Scroll up',
+        x: r.saveXY.x, y: r.saveXY.y, size: B,
+        accent: true,
+        onTap: handleSaveOrDownloadAll,
+        innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
+        ariaLabel: showDl ? 'Download all' : 'Save drawing',
+        disabled: state.disabledButtons.has('save'),
       });
+
+      // Upload (bottom)
       makeBtn({
-        x: r.scrollDownXY.x, y: r.scrollDownXY.y, size: B,
-        onTap: () => scrollSaved(-1),
-        innerHTML: FP.icon('scrollDown', B * 0.44),
-        ariaLabel: 'Scroll down',
+        x: r.uploadXY.x, y: r.uploadXY.y, size: B,
+        onTap: handleUploadTap,
+        innerHTML: FP.icon('upload', B * 0.44),
+        ariaLabel: 'Upload background',
+        disabled: state.disabledButtons.has('upload'),
+      });
+
+      // Scroll arrows — up (near Clear) shows older; down (near Save) shows newer
+      if (r.hasOverflow) {
+        makeBtn({
+          x: r.scrollUpXY.x, y: r.scrollUpXY.y, size: B,
+          onTap: () => scrollSaved(+1),
+          innerHTML: FP.icon('scrollUp', B * 0.44),
+          ariaLabel: 'Scroll up',
+        });
+        makeBtn({
+          x: r.scrollDownXY.x, y: r.scrollDownXY.y, size: B,
+          onTap: () => scrollSaved(-1),
+          innerHTML: FP.icon('scrollDown', B * 0.44),
+          ariaLabel: 'Scroll down',
+        });
+      }
+
+      // Thumbnails — thumb[0] is most-recent at the BOTTOM of strip
+      const visibleSaved = state.saved.slice(state.scrollOffset,
+                                              state.scrollOffset + r.maxVisible);
+      visibleSaved.forEach((entry, i) => {
+        const y = r.thumbYs[i];
+        if (y == null) return;
+        renderThumb(entry, r.uploadXY.x, y, B);
       });
     }
-
-    // Thumbnails — thumb[0] is most-recent at the BOTTOM of strip
-    const visibleSaved = state.saved.slice(state.scrollOffset,
-                                            state.scrollOffset + r.maxVisible);
-    visibleSaved.forEach((entry, i) => {
-      const y = r.thumbYs[i];
-      if (y == null) return;
-      renderThumb(entry, r.uploadXY.x, y, B);
-    });
   }
 
   function renderThumb(entry, x, y, B) {
@@ -554,7 +561,7 @@
   }
 
   async function handleClearTap() {
-    if (canvasComp.dirtySinceLoad) {
+    if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
       const choice = await FP.dialogs.clearDrawing();
       if (choice === 'cancel' || choice == null) return;
       if (choice === 'save') doSave();
