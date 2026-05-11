@@ -50,6 +50,12 @@ FP.icons = {
                 <path d="M19 6l-1 14H6L5 6"/>
                 <path d="M10 11v6M14 11v6"/>`,
 
+  book:        `<path d="M4 4h6a3 3 0 013 3v13a2 2 0 00-2-2H4z"/>
+                <path d="M20 4h-6a3 3 0 00-3 3v13a2 2 0 012-2h7z"/>`,
+
+  reload:      `<polyline points="3 4 3 10 9 10"/>
+                <path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/>`,
+
   scrollLeft:  `<polyline points="15 18 9 12 15 6"/>`,
   scrollRight: `<polyline points="9 18 15 12 9 6"/>`,
   scrollUp:    `<polyline points="18 15 12 9 6 15"/>`,
