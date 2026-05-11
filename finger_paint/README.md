@@ -37,6 +37,18 @@ Then visit `http://localhost:8765/finger_paint/` (or `.../finger_paint/crayon-mo
 ### Option 2: Open directly
 Open `index.html` in a modern browser. Works from the `file://` protocol, though some features (image upload) work better when served over HTTP.
 
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+,` | Decrease brush size |
+| `Ctrl+.` | Increase brush size |
+| `Ctrl+B` | Cycle brush type |
+| `Ctrl+Shift+↑` | Upload background image |
+| `Ctrl+Shift+↓` | Save / download drawing |
+| `Ctrl+G` | Toggle frame / floating-buttons mode |
+| `Ctrl+F` | Toggle fullscreen |
+
 ## Architecture
 
 - **Two-canvas system**: separate background and drawing layers
@@ -50,7 +62,6 @@ See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
 ## Not Yet Implemented
 
 - **Audio** — sound system is designed but awaiting audio assets
-- **Keyboard safety** — accidental keypresses can affect drawing
 - **Bar alignment** — toolbar edges don't perfectly align in all orientations
 
 ## Browser Support
