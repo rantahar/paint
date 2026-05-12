@@ -17,3 +17,6 @@ Thumbs.db
 # Node (not used, but standard)
 node_modules/
 npm-debug.log
+
+# Coloring pages
+coloring-pages/source/

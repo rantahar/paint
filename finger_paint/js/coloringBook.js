@@ -126,9 +126,10 @@ FP.coloringBook = {
         }
       } catch (e) { /* fall through to autoindex */ }
 
-      // 2. directory autoindex (dev only)
+      // 2. directory autoindex (dev only) — use processed/ subdirectory
       try {
-        const r = await fetch(dir, { headers: { Accept: 'text/html' } });
+        const processedDir = dir + 'processed/';
+        const r = await fetch(processedDir, { headers: { Accept: 'text/html' } });
         if (r.ok) {
           const ct = r.headers.get('content-type') || '';
           if (ct.includes('text/html')) {
@@ -137,7 +138,7 @@ FP.coloringBook = {
             _cachedPages = files.map(f => ({
               id:   f,
               name: _filenameToName(f),
-              url:  dir + f,
+              url:  processedDir + f,
             }));
             return _cachedPages;
           }
