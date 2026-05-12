@@ -12,23 +12,34 @@
         but NOT on GitHub Pages, which never serves directory listings.
      3. Empty list (no folder, no manifest, no autoindex).
 
-   Per-page autosave: localStorage key
-     fingerPaint.coloringPages.v2
-   shape:
-     { [pageId]: { bg, draw, thumb, name, t } }
+   Per-page autosave: IndexedDB database 'fingerPaint.coloring',
+   object store 'autosaves', keyPath 'pageId'.
+   Entry shape:
+     { pageId, bg, draw, thumb, name, t }
      • bg / draw: two-layer canvas state (image + transparent strokes)
      • thumb:     small composite preview for the strip
      • name:      preserved so orphans can be migrated with a name
-     • t:         last-modified epoch ms (used to drop oldest on quota)
+     • t:         last-modified epoch ms
    Storing the bg layer means we don't depend on the source file
    surviving in the folder — coloring-page sources can be deleted at
    any time without losing the user's saved work.
+
+   In-memory cache (_cache) is populated from IDB at init() and kept
+   in sync on every write. getAutosave/allAutosaveIds read from cache
+   synchronously so callers in app.js need no changes.
+
+   Writes (setAutosave/removeAutosave) update _cache synchronously
+   then fire-and-forget to IDB. If IDB is unavailable (_cbDb null),
+   writes update _cache only — app works for the session.
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
 
 const COLORING_DIR_NAME = 'coloring-pages';
-const AUTOSAVE_KEY      = 'fingerPaint.coloringPages.v2';
 const IMG_EXT_RE        = /\.(png|jpe?g|gif|webp|svg)$/i;
+
+const CB_DB_NAME = 'fingerPaint.coloring';
+const CB_DB_VER  = 1;
+const CB_STORE   = 'autosaves';
 
 function _coloringDir() {
   // crayon-mode lives one level down — walk up to reach the shared folder.
@@ -40,7 +51,54 @@ let _discoverPromise = null;
 let _cachedPages     = [];
 const _imageCache    = new Map();   // id → HTMLImageElement promise
 
+let _cbDb  = null;
+let _cache = {};   // pageId → { pageId, bg, draw, thumb, name, t }
+
+function _cbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(CB_DB_NAME, CB_DB_VER);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(CB_STORE)) {
+        db.createObjectStore(CB_STORE, { keyPath: 'pageId' });
+      }
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+function _cbGetAll() {
+  return new Promise((resolve, reject) => {
+    const tx  = _cbDb.transaction(CB_STORE, 'readonly');
+    const req = tx.objectStore(CB_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+function _cbPut(entry) {
+  if (!_cbDb) return;
+  _cbDb.transaction(CB_STORE, 'readwrite').objectStore(CB_STORE).put(entry);
+}
+
+function _cbDelete(pageId) {
+  if (!_cbDb) return;
+  _cbDb.transaction(CB_STORE, 'readwrite').objectStore(CB_STORE).delete(pageId);
+}
+
 FP.coloringBook = {
+  async init() {
+    try {
+      _cbDb = await _cbOpen();
+      const all = await _cbGetAll();
+      _cache = Object.fromEntries(all.map(e => [e.pageId, e]));
+    } catch (e) {
+      console.error('IDB unavailable for coloringBook — autosaves will not persist', e);
+      _cbDb = null;
+    }
+  },
+
   /**
    * Discovers available coloring pages. Returns a cached promise on
    * subsequent calls. The resolved array has shape:
@@ -108,61 +166,25 @@ FP.coloringBook = {
     return p;
   },
 
-  // ── Autosave persistence ──────────────────────────────────
-  _readAll() {
-    try {
-      const raw = localStorage.getItem(AUTOSAVE_KEY);
-      if (!raw) return {};
-      const obj = JSON.parse(raw);
-      return (obj && typeof obj === 'object') ? obj : {};
-    } catch (e) {
-      console.warn('coloringBook autosave parse failed', e);
-      return {};
-    }
-  },
-
-  _writeAll(obj) {
-    let entries = Object.entries(obj);
-    while (true) {
-      try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(Object.fromEntries(entries)));
-        return true;
-      } catch (e) {
-        if (entries.length === 0) {
-          console.error('coloringBook autosave failed even when empty', e);
-          return false;
-        }
-        // Drop the oldest entry (smallest .t)
-        let oldestIdx = 0;
-        for (let i = 1; i < entries.length; i++) {
-          if ((entries[i][1].t || 0) < (entries[oldestIdx][1].t || 0)) oldestIdx = i;
-        }
-        entries.splice(oldestIdx, 1);
-      }
-    }
-  },
+  // ── Autosave persistence (IDB-backed, cache-first) ────────
 
   getAutosave(pageId) {
-    const all = this._readAll();
-    return all[pageId] || null;
+    return _cache[pageId] || null;
   },
 
   setAutosave(pageId, payload) {
-    const all = this._readAll();
-    all[pageId] = Object.assign({}, payload, { t: Date.now() });
-    this._writeAll(all);
+    const entry = { ...payload, pageId, t: Date.now() };
+    _cache[pageId] = entry;
+    _cbPut(entry);
   },
 
   removeAutosave(pageId) {
-    const all = this._readAll();
-    if (pageId in all) {
-      delete all[pageId];
-      this._writeAll(all);
-    }
+    delete _cache[pageId];
+    _cbDelete(pageId);
   },
 
   allAutosaveIds() {
-    return Object.keys(this._readAll());
+    return Object.keys(_cache);
   },
 };
 

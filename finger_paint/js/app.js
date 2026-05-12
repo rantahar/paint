@@ -129,7 +129,7 @@
   // ── Boot ──────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', init);
 
-  function init() {
+  async function init() {
     appRoot = document.getElementById('app');
 
     // Layers (back to front): panel bgs → painting → buttons (buttons sit on top)
@@ -148,6 +148,9 @@
     buttonLayer = document.createElement('div');
     buttonLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
     appRoot.appendChild(buttonLayer);
+
+    // Open IndexedDB for both storage modules before first render
+    await Promise.all([FP.storage.init(), FP.coloringBook.init()]);
 
     // Load saved drawings
     state.saved = FP.storage.list();
@@ -1016,6 +1019,7 @@
         state.coloringConfirmReloadId = null;
       }
       onCanvasContentChanged();
+      renderAll();
     }
   }
 

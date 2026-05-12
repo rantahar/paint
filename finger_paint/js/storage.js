@@ -1,108 +1,109 @@
 /* ────────────────────────────────────────────────────────────
-   storage.js — localStorage persistence of saved drawings.
+   storage.js — IndexedDB persistence of saved drawings.
 
-   v2 envelope (current):
+   Entry shape (v2):
      { id: '<uuid>', t: <unix-ms>,
-       bg:    '<dataURL>',     // background layer (image baked in)
+       bg:    '<dataURL>',     // background layer
        draw:  '<dataURL>',     // transparent strokes layer (may be null)
        thumb: '<dataURL>' }    // small composite preview (~160px)
 
-   v1 envelope (legacy, read-only fallback):
-     { id, t, png }   where png is the flat composite.
-   On list() we transparently surface v1 entries shaped as v2
-     (bg = png, draw = null, thumb = png).
-   v1 data is left intact in localStorage until a subsequent add()
-   writes v2 — at which point the v1 key is ignored.
+   Listing order: most-recent first (sorted by t descending).
 
-   Listing order: most-recent first. (Newest unshifted to index 0.)
+   In-memory cache: _list is populated from IDB at init() and kept
+   in sync on every write. list() reads from _list synchronously so
+   callers in app.js need no changes.
+
+   Writes (add/remove) update _list synchronously then fire-and-forget
+   to IDB. If IDB is unavailable (_db null), writes update _list only
+   — the app works for the session but data does not survive a reload.
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
 
-const STORAGE_KEY_V1 = 'fingerPaint.savedDrawings.v1';
-const STORAGE_KEY    = 'fingerPaint.savedDrawings.v2';
+const DB_NAME    = 'fingerPaint.drawings';
+const DB_VERSION = 1;
+const STORE      = 'drawings';
+
+let _db   = null;
+let _list = [];   // in-memory, most-recent-first
+
+function _openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        const store = db.createObjectStore(STORE, { keyPath: 'id' });
+        store.createIndex('t', 't', { unique: false });
+      }
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+function _idbGetAll() {
+  return new Promise((resolve, reject) => {
+    const tx  = _db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+function _idbPut(entry) {
+  if (!_db) return;
+  _db.transaction(STORE, 'readwrite').objectStore(STORE).put(entry);
+}
+
+function _idbDelete(id) {
+  if (!_db) return;
+  _db.transaction(STORE, 'readwrite').objectStore(STORE).delete(id);
+}
 
 FP.storage = {
+  async init() {
+    try {
+      _db   = await _openDb();
+      const all = await _idbGetAll();
+      _list = all.sort((a, b) => b.t - a.t);
+    } catch (e) {
+      console.error('IDB unavailable — drawings will not persist this session', e);
+      _db   = null;
+      _list = [];
+    }
+  },
+
   list() {
-    // Prefer v2
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) return arr;
-      }
-    } catch (e) {
-      console.warn('storage.list: v2 parse failed', e);
-    }
-    // Fallback: migrate v1 shape on read
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY_V1);
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          return arr.map(e => ({
-            id: e.id, t: e.t,
-            bg: e.png, draw: null, thumb: e.png,
-          }));
-        }
-      }
-    } catch (e) {
-      console.warn('storage.list: v1 fallback parse failed', e);
-    }
-    return [];
+    return _list.slice();
   },
 
   add(bgDataUrl, drawDataUrl, thumbDataUrl) {
-    const list = this.list();
     const entry = {
-      id: _uuid(),
-      t:  Date.now(),
+      id:    _uuid(),
+      t:     Date.now(),
       bg:    bgDataUrl,
-      draw:  drawDataUrl || null,
+      draw:  drawDataUrl  || null,
       thumb: thumbDataUrl || bgDataUrl,
     };
-    list.unshift(entry);
-    this._writeWithFallback(list);
+    _list.unshift(entry);
+    _idbPut(entry);
     return entry;
   },
 
   remove(id) {
-    const list = this.list().filter(e => e.id !== id);
-    this._writeWithFallback(list);
+    _list = _list.filter(e => e.id !== id);
+    _idbDelete(id);
   },
 
   get(id) {
-    return this.list().find(e => e.id === id) || null;
+    return _list.find(e => e.id === id) || null;
   },
 
-  // ── Quota-aware writer ─────────────────────────────────────
-  // localStorage caps around 5 MB. If we hit quota, drop the OLDEST
-  // entries until the write succeeds. Returns true on success.
-  _writeWithFallback(list) {
-    let attempt = list.slice();
-    while (attempt.length >= 0) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(attempt));
-        return true;
-      } catch (e) {
-        if (attempt.length === 0) {
-          console.error('storage write failed even when empty', e);
-          return false;
-        }
-        // drop the oldest (highest index) entry
-        attempt.pop();
-      }
-    }
-  },
-
-  // Build a full-size composite PNG dataURL from a v2 entry.
-  // Used by downloadOne when the entry has no flat `png` field.
+  // Build a full-size composite PNG dataURL from an entry.
   compositeFromEntry(entry) {
-    if (entry.png) return Promise.resolve(entry.png);  // v1 shape
     return _flattenLayers(entry.bg, entry.draw);
   },
 
-  // Download helper — invoked from the Download-All flow.
-  // Triggers a single PNG download via a hidden anchor.
   async downloadOne(entry) {
     const a = document.getElementById('download-anchor');
     a.href = await this.compositeFromEntry(entry);
@@ -110,13 +111,9 @@ FP.storage = {
     a.click();
   },
 
-  // Bulk download — kicks off N download events sequentially.
-  // Browsers may consolidate or rate-limit these; that's acceptable.
   downloadAll() {
     const list = this.list();
     list.forEach((entry, i) => {
-      // Stagger by 200ms so the browser's "multiple downloads" prompt
-      // shows once and individual files don't clobber each other.
       setTimeout(() => this.downloadOne(entry), i * 200);
     });
   },
@@ -134,8 +131,6 @@ function _filenameTimestamp(ms) {
          `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-// Flatten a (bg, draw) pair into a single composite PNG dataURL.
-// Returns the bg dataURL unchanged if draw is null/empty.
 function _flattenLayers(bgUrl, drawUrl) {
   if (!drawUrl) return Promise.resolve(bgUrl);
   return Promise.all([_loadImg(bgUrl), _loadImg(drawUrl)]).then(([bg, draw]) => {
