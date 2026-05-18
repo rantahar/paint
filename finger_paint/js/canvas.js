@@ -79,10 +79,16 @@ FP.PaintingCanvas = class {
     this._pageHeight = null;          // natural page height in painting units
     this._maxPaintingH = null;        // max height for canvas expansion when a page is loaded
 
-    // Visual frame background (indicates constrained drawing area)
+    // Visual frame: grey background fill (indicates constrained drawing area when coloring page loaded)
+    this._frameBgFillEl = document.createElement('div');
+    this._frameBgFillEl.className = 'canvas-frame-bg-fill';
+    this.wrapEl.insertBefore(this._frameBgFillEl, this.paintingEl);
+    this._frameBgFillEl.style.display = 'none';
+
+    // Visual frame: border (always shown to frame the drawing area)
     this._frameBgEl = document.createElement('div');
     this._frameBgEl.className = 'canvas-frame-bg';
-    this.wrapEl.insertBefore(this._frameBgEl, this.paintingEl);
+    this.wrapEl.appendChild(this._frameBgEl);
     this._frameBgEl.style.display = 'none';
 
     // Pointer events
@@ -172,14 +178,23 @@ FP.PaintingCanvas = class {
     this.bgCanvas.style.height   = cssH + 'px';
     this.drawCanvas.style.height = cssH + 'px';
 
+    // Update grey background fill (visible only when a coloring page is loaded)
+    if (hasColoringPage) {
+      this._frameBgFillEl.style.display = 'block';
+      this._frameBgFillEl.style.left     = '0px';
+      this._frameBgFillEl.style.top      = '0px';
+      this._frameBgFillEl.style.width    = width  + 'px';
+      this._frameBgFillEl.style.height   = height + 'px';
+    } else {
+      this._frameBgFillEl.style.display = 'none';
+    }
+
     // Update canvas border (always shown to frame the drawing area)
     this._frameBgEl.style.display = 'block';
     this._frameBgEl.style.left     = '0px';
     this._frameBgEl.style.top      = '0px';
     this._frameBgEl.style.width    = width  + 'px';
     this._frameBgEl.style.height   = height + 'px';
-    // Show grey background only when a coloring page is loaded (indicates constrained area)
-    this._frameBgEl.style.background = hasColoringPage ? 'rgba(242,240,235,0.85)' : 'transparent';
   }
 
   // ── Tool state ──────────────────────────────────────────────

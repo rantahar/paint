@@ -217,16 +217,24 @@ body.dialog-open .btn {
   z-index: 1;
 }
 
-/* ── Canvas border (frame around drawing area) ── */
+/* ── Canvas frame background (grey fill in margins when coloring page loaded) ── */
+.canvas-frame-bg-fill {
+  position: absolute;
+  background: rgba(242,240,235,0.85);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Canvas border (frame around drawing area, on top) ── */
 .canvas-frame-bg {
   position: absolute;
   border: 1px solid rgba(0,0,0,0.1);
   pointer-events: none;
-  z-index: 1;
+  z-index: 3;
 }
 
-/* Buttons are above panel backgrounds */
-.btn { z-index: 3; }
+/* Buttons are above all other elements */
+.btn { z-index: 4; }
 
 /* ── Modal dialog ── */
 .dialog-backdrop {
