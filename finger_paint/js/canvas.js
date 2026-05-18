@@ -413,20 +413,42 @@ FP.PaintingCanvas = class {
 
   // ── Page-flip animation ─────────────────────────────────────
   /** Runs `midActionFn` at the midpoint of a 2-stage CSS flip. */
-  async pageFlip(midActionFn) {
+  /**
+   * Page transition animation. Supports multiple styles:
+   * - 'flip' (default): 3D page flip
+   * - 'fade': Simple fade out/in (resize invisible)
+   * - 'crossfade': Simultaneous crossfade between pages
+   * - 'slide': Slide up transition
+   * - 'wipe': Wipe transition from right
+   */
+  async pageFlip(midActionFn, style = 'flip') {
     FP.playSound('pageTurn');
     const el = this.paintingEl;
-    el.classList.remove('flipping-in', 'flipping-out');
+
+    // Map animation style to CSS class prefixes
+    const classMap = {
+      flip: { out: 'flipping-out', in: 'flipping-in' },
+      fade: { out: 'anim-fade-out', in: 'anim-fade-in' },
+      crossfade: { out: 'anim-crossfade-out', in: 'anim-crossfade-in' },
+      slide: { out: 'anim-slide-out', in: 'anim-slide-in' },
+      wipe: { out: 'anim-wipe-out', in: 'anim-wipe-in' },
+    };
+    const classes = classMap[style] || classMap.flip;
+
+    // Remove all animation classes
+    el.classList.remove('flipping-in', 'flipping-out', 'anim-fade-out', 'anim-fade-in',
+                        'anim-crossfade-out', 'anim-crossfade-in', 'anim-slide-out',
+                        'anim-slide-in', 'anim-wipe-out', 'anim-wipe-in');
     // force reflow so re-adding class re-triggers animation
     void el.offsetWidth;
-    el.classList.add('flipping-out');
+    el.classList.add(classes.out);
     await _wait(FLIP_HALF_MS);
     try { await midActionFn(); } catch (e) { console.warn('pageFlip mid action failed', e); }
-    el.classList.remove('flipping-out');
+    el.classList.remove(classes.out);
     void el.offsetWidth;
-    el.classList.add('flipping-in');
+    el.classList.add(classes.in);
     await _wait(FLIP_HALF_MS);
-    el.classList.remove('flipping-in');
+    el.classList.remove(classes.in);
   }
 
   // ── Pointer handlers ────────────────────────────────────────
