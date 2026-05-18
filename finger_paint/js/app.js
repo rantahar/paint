@@ -287,10 +287,14 @@
     // Reposition canvas based on frame mode
     let canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
 
-    // In Crayon mode, when a coloring page is loaded, don't constrain frame by save bar
-    // Use full window dimensions (top-left = 0,0) for aspect ratio calculation
+    // In Crayon mode, when a coloring page is loaded, use full window in one axis
+    // Landscape: full height, constrained width. Portrait: full width, constrained height
     if (CFG.clearOnly && state.currentColoringPageId && state.frameMode) {
-      canvasRect = { left: 0, top: 0, width: w, height: h };
+      if (layout.orientation === 'landscape') {
+        canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: layout.canvas.width, height: h };
+      } else {
+        canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: w, height: layout.canvas.height };
+      }
     }
 
     canvasComp.setRect(canvasRect, state.frameMode);
@@ -666,13 +670,35 @@
       ariaLabel: page.name,
       extraClass: 'thumb',
     });
+
     // Prefer the autosaved thumbnail (shows the user's painted state on the
-    // page) if present; otherwise show the unmodified source image.
+    // page) if present; otherwise generate a smooth canvas-based thumbnail.
     const autosave = FP.coloringBook.getAutosave(page.id);
-    const img = document.createElement('img');
-    img.src = (autosave && autosave.thumb) || page.url;
-    img.alt = '';
-    btn.appendChild(img);
+    if (autosave && autosave.thumb) {
+      const img = document.createElement('img');
+      img.src = autosave.thumb;
+      img.alt = '';
+      btn.appendChild(img);
+    } else {
+      // No autosave: generate a smooth canvas thumbnail from the page image
+      FP.coloringBook.loadImage(page).then(image => {
+        const thumbDataUrl = FP.PaintingCanvas.generateThumbnailFromImage(image, B);
+        const img = document.createElement('img');
+        img.src = thumbDataUrl;
+        img.alt = '';
+        // Only append if the button still exists and page hasn't changed
+        if (btn.parentNode && state.currentColoringPageId !== page.id) {
+          btn.appendChild(img);
+        }
+      }).catch(err => {
+        console.warn('Failed to generate coloring page thumbnail', err);
+        // Fallback: show the raw image
+        const img = document.createElement('img');
+        img.src = page.url;
+        img.alt = '';
+        if (btn.parentNode) btn.appendChild(img);
+      });
+    }
   }
 
   function renderThumb(entry, x, y, B) {

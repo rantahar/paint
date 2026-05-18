@@ -362,13 +362,54 @@ FP.PaintingCanvas = class {
     return out.toDataURL('image/png');
   }
 
-  /** Smaller PNG using the top PAINTING_W×PAINTING_W square for thumbnails. Always zoom-to-fill. */
+  /** Smaller PNG for thumbnails. Fills square with center alignment (like page scaling). */
   toThumbnailDataURL(size = 160) {
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');
-    ox.drawImage(this.bgCanvas,   0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
-    ox.drawImage(this.drawCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+
+    // If coloring page loaded, use aspect-ratio-aware scaling (center-aligned)
+    if (this._pageWidth !== null && this._pageHeight !== null) {
+      const pageAspectRatio = this._pageWidth / this._pageHeight;
+      let srcX, srcY, srcW, srcH, destX, destY, destW, destH;
+
+      if (pageAspectRatio >= 1) {
+        // Landscape page: fit to height, overflow left/right → center horizontally
+        srcH = this._pageHeight;
+        srcW = Math.round(srcH * pageAspectRatio);
+        srcY = 0;
+        srcX = Math.max(0, (srcW - PAINTING_W) / 2);
+
+        destH = size;
+        destW = Math.round(size * pageAspectRatio);
+        destY = (size - destH) / 2;
+        destX = (size - destW) / 2;
+      } else {
+        // Portrait page: fit to width, overflow top/bottom → center vertically
+        srcW = this._pageWidth;
+        srcH = Math.round(srcW / pageAspectRatio);
+        srcX = 0;
+        srcY = Math.max(0, (srcH - PAINTING_W) / 2);
+
+        destW = size;
+        destH = Math.round(size / pageAspectRatio);
+        destX = (size - destW) / 2;
+        destY = (size - destH) / 2;
+      }
+
+      // Fill with white background
+      ox.fillStyle = '#ffffff';
+      ox.fillRect(0, 0, size, size);
+
+      // Draw the page content centered
+      ox.drawImage(this.bgCanvas,   srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.drawCanvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+    } else {
+      // Blank canvas: use the standard square capture (zoom-to-fill top-left)
+      ox.drawImage(this.bgCanvas,   0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+      ox.drawImage(this.drawCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+    }
+
     return out.toDataURL('image/png');
   }
 
@@ -565,6 +606,53 @@ FP.PaintingCanvas = class {
     if (this.dirtySinceLoad === d) return;
     this.dirtySinceLoad = d;
     if (this.onDirtyChange) this.onDirtyChange(d);
+  }
+
+  /**
+   * Static helper: Generate a thumbnail from an image element.
+   * Uses aspect-ratio-aware center alignment (fills square with overflow).
+   */
+  static generateThumbnailFromImage(image, size = 160) {
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    const ox = out.getContext('2d');
+
+    const imgW = image.naturalWidth;
+    const imgH = image.naturalHeight;
+    const pageAspectRatio = imgW / imgH;
+
+    // Fill with white background
+    ox.fillStyle = '#ffffff';
+    ox.fillRect(0, 0, size, size);
+
+    let srcX, srcY, srcW, srcH, destX, destY, destW, destH;
+
+    if (pageAspectRatio >= 1) {
+      // Landscape image: fit to height, overflow left/right → center horizontally
+      srcH = imgH;
+      srcW = Math.round(srcH * pageAspectRatio);
+      srcY = 0;
+      srcX = Math.max(0, (srcW - imgW) / 2);
+
+      destH = size;
+      destW = Math.round(size * pageAspectRatio);
+      destY = (size - destH) / 2;
+      destX = (size - destW) / 2;
+    } else {
+      // Portrait image: fit to width, overflow top/bottom → center vertically
+      srcW = imgW;
+      srcH = Math.round(srcW / pageAspectRatio);
+      srcX = 0;
+      srcY = Math.max(0, (srcH - imgH) / 2);
+
+      destW = size;
+      destH = Math.round(size / pageAspectRatio);
+      destX = (size - destW) / 2;
+      destY = (size - destH) / 2;
+    }
+
+    ox.drawImage(image, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+    return out.toDataURL('image/png');
   }
 };
 
