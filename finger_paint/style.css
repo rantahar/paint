@@ -215,13 +215,18 @@ body.dialog-open .btn {
   pointer-events: none;
   z-index: 1;
 }
+.panel-bg.with-border-bottom { border-bottom: 1px solid rgba(0,0,0,0.1); }
+.panel-bg.with-border-top    { border-top:    1px solid rgba(0,0,0,0.1); }
+.panel-bg.with-border-left   { border-left:   1px solid rgba(0,0,0,0.1); }
+.panel-bg.with-border-right  { border-right:  1px solid rgba(0,0,0,0.1); }
 
 /* ── Canvas frame background (indicates constrained drawing area for coloring pages) ── */
 .canvas-frame-bg {
   position: absolute;
   background: rgba(242,240,235,0.85);
+  border: 1px solid rgba(0,0,0,0.1);
   pointer-events: none;
-  z-index: 0;
+  z-index: 2;
 }
 
 /* Buttons are above panel backgrounds */
