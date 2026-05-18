@@ -33,6 +33,7 @@ html, body {
   background: #ffffff;
   transform-origin: center center;
   /* perspective applied on parent for page-flip animation */
+  z-index: 2;
 }
 
 .painting canvas {
@@ -221,7 +222,7 @@ body.dialog-open .btn {
   position: absolute;
   border: 1px solid rgba(0,0,0,0.1);
   pointer-events: none;
-  z-index: 2;
+  z-index: 1;
 }
 
 /* Buttons are above panel backgrounds */
