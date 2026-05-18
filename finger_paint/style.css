@@ -22,6 +22,8 @@ html, body {
   position: fixed;
   inset: 0;
   background: #f5f3ee;
+  outline: none;
+  border: none;
 }
 
 /* ── The painting (canvas stack) — square, top-left aligned ── */
