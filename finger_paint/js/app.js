@@ -30,7 +30,7 @@
 
   // ── Page flip animation style (configurable) ──────────────────
   // Options: 'flip' (default), 'fade', 'crossfade', 'slide', 'wipe'
-  const PAGE_FLIP_ANIMATION = CFG.pageFlipAnimation || 'flip';
+  const PAGE_FLIP_ANIMATION = 'fade';
 
   // ── Brush size scale (painting units, 1000-scale) ─────────────
   const SIZE_LEVELS = [4, 6, 9, 13, 18, 24, 32, 42, 56, 72];
@@ -854,7 +854,9 @@
       await canvasComp.pageFlip(async () => {
         canvasComp.reset();
         onCanvasContentChanged();
-      }, PAGE_FLIP_ANIMATION);
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
+      });
       return;
     }
     if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
@@ -865,7 +867,9 @@
     await canvasComp.pageFlip(async () => {
       canvasComp.clearDrawing();
       onCanvasContentChanged();
-    }, PAGE_FLIP_ANIMATION);
+    }, PAGE_FLIP_ANIMATION, () => {
+      renderAll();
+    });
   }
 
   async function handleSaveOrDownloadAll() {
@@ -944,8 +948,9 @@
         state.loadedDrawingEntry = entry;
         state.savedJustNow    = true;  // show download button for the loaded drawing
         // Do NOT re-enable save button — loaded drawing is already saved
-      }, PAGE_FLIP_ANIMATION);
-      renderAll();
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
+      });
     }
   }
 
@@ -1011,13 +1016,17 @@
         canvasComp.setBackgroundImage(newImg);
         canvasComp.clearDrawing();
         onCanvasContentChanged();
-      }, PAGE_FLIP_ANIMATION);
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
+      });
     } else if (choice === 'keep-drawing') {
       // Set background image but preserve drawing strokes
       await canvasComp.pageFlip(async () => {
         canvasComp.setBackgroundImage(newImg);
         onCanvasContentChanged();
-      }, PAGE_FLIP_ANIMATION);
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
+      });
     }
     FP.playSound('bgUpload');
   }
@@ -1134,9 +1143,10 @@
       const img = await FP.coloringBook.loadImage(page);
       canvasComp.setBackgroundImage(img);
       canvasComp.clearDrawing();
-    }, PAGE_FLIP_ANIMATION);
+    }, PAGE_FLIP_ANIMATION, () => {
+      renderAll();
+    });
     FP.playSound('deleteDrawing');
-    renderAll();
   }
 
   async function loadColoringPage(page) {
@@ -1161,8 +1171,10 @@
       state.loadedDrawingEntry      = null;
       state.savedJustNow            = false;
       enableBtn('save');
-    }, PAGE_FLIP_ANIMATION);
-    renderAll();
+    }, PAGE_FLIP_ANIMATION, () => {
+      // After page loaded, update rect during animation (before flip-in starts)
+      renderAll();
+    });
   }
 
   function autosaveCurrentColoringPage() {

@@ -420,8 +420,12 @@ FP.PaintingCanvas = class {
    * - 'crossfade': Simultaneous crossfade between pages
    * - 'slide': Slide up transition
    * - 'wipe': Wipe transition from right
+   *
+   * @param {Function} midActionFn - Called at animation midpoint to load new page
+   * @param {string} style - Animation style
+   * @param {Function} postLoadFn - Called after page loaded, before flip-in animation (optional)
    */
-  async pageFlip(midActionFn, style = 'flip') {
+  async pageFlip(midActionFn, style = 'flip', postLoadFn = null) {
     FP.playSound('pageTurn');
     const el = this.paintingEl;
 
@@ -444,6 +448,10 @@ FP.PaintingCanvas = class {
     el.classList.add(classes.out);
     await _wait(FLIP_HALF_MS);
     try { await midActionFn(); } catch (e) { console.warn('pageFlip mid action failed', e); }
+    // Allow post-load callback to apply new rect before flip-in animation starts
+    if (postLoadFn) {
+      try { await postLoadFn(); } catch (e) { console.warn('pageFlip post-load failed', e); }
+    }
     el.classList.remove(classes.out);
     void el.offsetWidth;
     el.classList.add(classes.in);
