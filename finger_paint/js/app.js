@@ -285,8 +285,15 @@
     lastLayout = layout;
 
     // Reposition canvas based on frame mode
-    const canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
-    canvasComp.setRect(canvasRect);
+    let canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
+
+    // In Crayon mode, when a coloring page is loaded, don't constrain frame by save bar
+    // Use full window dimensions for aspect ratio calculation
+    if (CFG.clearOnly && state.currentColoringPageId && state.frameMode) {
+      canvasRect = { left: canvasRect.left, top: canvasRect.top, width: w, height: h };
+    }
+
+    canvasComp.setRect(canvasRect, state.frameMode);
 
     // Clear layers
     panelLayer.innerHTML  = '';
@@ -1100,14 +1107,20 @@
 
   async function loadColoringPage(page) {
     const autosave = FP.coloringBook.getAutosave(page.id);
+    // Load the page image to get dimensions for aspect-ratio-aware scaling
+    const img = await FP.coloringBook.loadImage(page);
+    const imgH = Math.round(img.naturalHeight / img.naturalWidth * 1000);  // PAINTING_W = 1000
+
     await canvasComp.pageFlip(async () => {
       if (autosave && autosave.bg) {
         await canvasComp.loadLayersFromDataUrls(autosave.bg, autosave.draw);
       } else {
-        const img = await FP.coloringBook.loadImage(page);
         canvasComp.setBackgroundImage(img);
         canvasComp.clearDrawing();
       }
+      // Set page dimensions for aspect-ratio-aware scaling (even for autosaves)
+      canvasComp.setPageDimensions(1000, imgH);
+
       state.currentColoringPageId   = page.id;
       state.coloringConfirmReloadId = null;
       state.loadedDrawingId         = null;
@@ -1139,6 +1152,8 @@
     autosaveCurrentColoringPage();
     state.currentColoringPageId   = null;
     state.coloringConfirmReloadId = null;
+    // Clear page dimensions when leaving coloring page
+    canvasComp.setPageDimensions(null, null);
   }
 
   function scrollColoring(direction) {
