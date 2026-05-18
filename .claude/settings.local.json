@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Cakoluchiam/Downloads/**)",
+      "Bash(unzip -l \"/c/Users/Cakoluchiam/Downloads/Finger Painting v2.zip\")",
+      "Bash(unzip -o \"/c/Users/Cakoluchiam/Downloads/Finger Painting v2.zip\" -d \"/tmp/finger-painting-design/\")",
+      "Read(//tmp/finger-painting-design/**)"
+    ]
+  }
+}

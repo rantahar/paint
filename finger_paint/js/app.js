@@ -28,6 +28,10 @@
     'yellow', 'wheat', '#f5f5f5', '#bbbbbb', 'yellowgreen',
   ]);
 
+  // ── Page flip animation style (configurable) ──────────────────
+  // Options: 'flip' (default), 'fade', 'crossfade', 'slide', 'wipe'
+  const PAGE_FLIP_ANIMATION = CFG.pageFlipAnimation || 'flip';
+
   // ── Brush size scale (painting units, 1000-scale) ─────────────
   const SIZE_LEVELS = [4, 6, 9, 13, 18, 24, 32, 42, 56, 72];
   const DEFAULT_SIZE_IDX = 3;  // size 13
@@ -285,14 +289,26 @@
     lastLayout = layout;
 
     // Reposition canvas based on frame mode
-    const canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
-    canvasComp.setRect(canvasRect);
+    let canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
+
+    // In Crayon mode, use full window in one axis (applies to all content: coloring pages, blank, etc)
+    // Landscape: full height, constrained width. Portrait: full width, constrained height
+    if (CFG.clearOnly && state.frameMode) {
+      if (layout.orientation === 'landscape') {
+        canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: layout.canvas.width, height: h };
+      } else {
+        canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: w, height: layout.canvas.height };
+      }
+    }
+
+    canvasComp.setRect(canvasRect, state.frameMode);
 
     // Clear layers
     panelLayer.innerHTML  = '';
     buttonLayer.innerHTML = '';
 
-    if (state.frameMode) {
+    // In Crayon mode, never show the toolbar panel backgrounds
+    if (state.frameMode && !CFG.clearOnly) {
       renderPanels(layout);
     }
     renderColorSwatches(layout);
@@ -302,7 +318,11 @@
   }
 
   function renderPanels(layout) {
-    layout.panels.forEach(p => {
+    layout.panels.forEach((p, idx) => {
+      // In Crayon mode, always skip the save bar panel background (last panel in layout.panels)
+      // This applies to all content types (coloring pages, regular backgrounds, blank canvas)
+      if (CFG.clearOnly && idx === layout.panels.length - 1) return;
+
       const el = document.createElement('div');
       el.className = 'panel-bg';
       if (p.borders) {
@@ -656,13 +676,35 @@
       ariaLabel: page.name,
       extraClass: 'thumb',
     });
+
     // Prefer the autosaved thumbnail (shows the user's painted state on the
-    // page) if present; otherwise show the unmodified source image.
+    // page) if present; otherwise generate a smooth canvas-based thumbnail.
     const autosave = FP.coloringBook.getAutosave(page.id);
-    const img = document.createElement('img');
-    img.src = (autosave && autosave.thumb) || page.url;
-    img.alt = '';
-    btn.appendChild(img);
+    if (autosave && autosave.thumb) {
+      const img = document.createElement('img');
+      img.src = autosave.thumb;
+      img.alt = '';
+      btn.appendChild(img);
+    } else {
+      // No autosave: generate a smooth canvas thumbnail from the page image
+      FP.coloringBook.loadImage(page).then(image => {
+        const thumbDataUrl = FP.PaintingCanvas.generateThumbnailFromImage(image, 160);
+        const img = document.createElement('img');
+        img.src = thumbDataUrl;
+        img.alt = '';
+        // Only append if the button still exists (it may have been removed by scrolling)
+        if (btn.parentNode) {
+          btn.appendChild(img);
+        }
+      }).catch(err => {
+        console.warn('Failed to generate coloring page thumbnail', err);
+        // Fallback: show the raw image
+        const img = document.createElement('img');
+        img.src = page.url;
+        img.alt = '';
+        if (btn.parentNode) btn.appendChild(img);
+      });
+    }
   }
 
   function renderThumb(entry, x, y, B) {
@@ -813,6 +855,8 @@
       await canvasComp.pageFlip(async () => {
         canvasComp.reset();
         onCanvasContentChanged();
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
       });
       return;
     }
@@ -824,6 +868,8 @@
     await canvasComp.pageFlip(async () => {
       canvasComp.clearDrawing();
       onCanvasContentChanged();
+    }, PAGE_FLIP_ANIMATION, () => {
+      renderAll();
     });
   }
 
@@ -903,8 +949,9 @@
         state.loadedDrawingEntry = entry;
         state.savedJustNow    = true;  // show download button for the loaded drawing
         // Do NOT re-enable save button — loaded drawing is already saved
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
       });
-      renderAll();
     }
   }
 
@@ -970,12 +1017,16 @@
         canvasComp.setBackgroundImage(newImg);
         canvasComp.clearDrawing();
         onCanvasContentChanged();
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
       });
     } else if (choice === 'keep-drawing') {
       // Set background image but preserve drawing strokes
       await canvasComp.pageFlip(async () => {
         canvasComp.setBackgroundImage(newImg);
         onCanvasContentChanged();
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
       });
     }
     FP.playSound('bgUpload');
@@ -1093,29 +1144,41 @@
       const img = await FP.coloringBook.loadImage(page);
       canvasComp.setBackgroundImage(img);
       canvasComp.clearDrawing();
+    }, PAGE_FLIP_ANIMATION, () => {
+      renderAll();
     });
     FP.playSound('deleteDrawing');
-    renderAll();
   }
 
   async function loadColoringPage(page) {
     const autosave = FP.coloringBook.getAutosave(page.id);
+    // Load the page image to get dimensions for aspect-ratio-aware scaling
+    const img = await FP.coloringBook.loadImage(page);
+    const imgH = Math.round(img.naturalHeight / img.naturalWidth * 1000);  // PAINTING_W = 1000
+
     await canvasComp.pageFlip(async () => {
       if (autosave && autosave.bg) {
         await canvasComp.loadLayersFromDataUrls(autosave.bg, autosave.draw);
       } else {
-        const img = await FP.coloringBook.loadImage(page);
         canvasComp.setBackgroundImage(img);
         canvasComp.clearDrawing();
       }
+      // Set page dimensions for aspect-ratio-aware scaling (even for autosaves)
+      canvasComp.setPageDimensions(1000, imgH);
+
       state.currentColoringPageId   = page.id;
       state.coloringConfirmReloadId = null;
       state.loadedDrawingId         = null;
       state.loadedDrawingEntry      = null;
       state.savedJustNow            = false;
       enableBtn('save');
+
+      // Automatically switch to frame view when loading a coloring page
+      state.frameMode = true;
+    }, PAGE_FLIP_ANIMATION, () => {
+      // After page loaded, update rect during animation (before flip-in starts)
+      renderAll();
     });
-    renderAll();
   }
 
   function autosaveCurrentColoringPage() {
@@ -1139,6 +1202,8 @@
     autosaveCurrentColoringPage();
     state.currentColoringPageId   = null;
     state.coloringConfirmReloadId = null;
+    // Clear page dimensions when leaving coloring page
+    canvasComp.setPageDimensions(null, null);
   }
 
   function scrollColoring(direction) {

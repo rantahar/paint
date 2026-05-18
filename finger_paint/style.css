@@ -22,6 +22,8 @@ html, body {
   position: fixed;
   inset: 0;
   background: #f5f3ee;
+  outline: none;
+  border: none;
 }
 
 /* ── The painting (canvas stack) — square, top-left aligned ── */
@@ -31,6 +33,7 @@ html, body {
   background: #ffffff;
   transform-origin: center center;
   /* perspective applied on parent for page-flip animation */
+  z-index: 2;
 }
 
 .painting canvas {
@@ -51,7 +54,7 @@ html, body {
 }
 .painting-wrap > .painting { pointer-events: auto; }
 
-/* Page-turn animation */
+/* Page-turn animation: flip style (default) */
 .painting.flipping-out {
   animation: pageFlipOut 220ms ease-in forwards;
 }
@@ -65,6 +68,70 @@ html, body {
 @keyframes pageFlipIn {
   from { transform: rotateY(90deg);  box-shadow: 10px 0 30px rgba(0,0,0,0.25); }
   to   { transform: rotateY(0deg);   box-shadow: 0 0 0 rgba(0,0,0,0); }
+}
+
+/* Fade animation: fade out, resize, fade in */
+.painting.anim-fade-out {
+  animation: pageFadeOut 220ms ease-in forwards;
+}
+.painting.anim-fade-in {
+  animation: pageFadeIn 220ms ease-out forwards;
+}
+@keyframes pageFadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes pageFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Crossfade animation: fade out old, fade in new simultaneously */
+.painting.anim-crossfade-out {
+  animation: pageCrossfadeOut 220ms ease-in forwards;
+}
+.painting.anim-crossfade-in {
+  animation: pageCrossfadeIn 220ms ease-out forwards;
+}
+@keyframes pageCrossfadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes pageCrossfadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Slide animation: old page slides up, new page slides up from bottom */
+.painting.anim-slide-out {
+  animation: pageSlideOut 220ms ease-in forwards;
+}
+.painting.anim-slide-in {
+  animation: pageSlideIn 220ms ease-out forwards;
+}
+@keyframes pageSlideOut {
+  from { transform: translateY(0);     opacity: 1; }
+  to   { transform: translateY(-100%); opacity: 0; }
+}
+@keyframes pageSlideIn {
+  from { transform: translateY(100%);  opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+/* Wipe animation: wipe from right */
+.painting.anim-wipe-out {
+  animation: pageWipeOut 220ms ease-in forwards;
+}
+.painting.anim-wipe-in {
+  animation: pageWipeIn 220ms ease-out forwards;
+}
+@keyframes pageWipeOut {
+  from { clip-path: inset(0 0 0 0); }
+  to   { clip-path: inset(0 0 0 100%); }
+}
+@keyframes pageWipeIn {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
 }
 
 /* ── Buttons (rendered as <button class="btn">) ── */
@@ -83,6 +150,8 @@ html, body {
   overflow: hidden;
   font: inherit;
   color: inherit;
+  user-select: none;
+  -webkit-user-select: none;
   transition: transform 60ms ease-out, outline-offset 60ms ease-out;
   pointer-events: auto;
 }
@@ -147,13 +216,25 @@ body.dialog-open .btn {
   pointer-events: none;
   z-index: 1;
 }
-.panel-bg.with-border-bottom { border-bottom: 1px solid rgba(0,0,0,0.1); }
-.panel-bg.with-border-top    { border-top:    1px solid rgba(0,0,0,0.1); }
-.panel-bg.with-border-left   { border-left:   1px solid rgba(0,0,0,0.1); }
-.panel-bg.with-border-right  { border-right:  1px solid rgba(0,0,0,0.1); }
 
-/* Buttons are above panel backgrounds */
-.btn { z-index: 3; }
+/* ── Canvas frame background (grey fill in margins when coloring page loaded) ── */
+.canvas-frame-bg-fill {
+  position: absolute;
+  background: rgba(242,240,235,0.85);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Canvas border (frame around drawing area, on top) ── */
+.canvas-frame-bg {
+  position: absolute;
+  border: 1px solid rgba(0,0,0,0.1);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Buttons are above all other elements */
+.btn { z-index: 4; }
 
 /* ── Modal dialog ── */
 .dialog-backdrop {

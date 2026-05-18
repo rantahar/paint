@@ -74,6 +74,23 @@ FP.PaintingCanvas = class {
     this.dirtySinceLoad = false;      // true once a stroke touches; reset on save/clear/load
     this.onDirtyChange = null;        // callback for app to update Save↔Download button
 
+    // Coloring page dimensions (aspect ratio aware scaling)
+    this._pageWidth  = null;          // natural page width in painting units (or null if no page)
+    this._pageHeight = null;          // natural page height in painting units
+    this._maxPaintingH = null;        // max height for canvas expansion when a page is loaded
+
+    // Visual frame: grey background fill (indicates constrained drawing area when coloring page loaded)
+    this._frameBgFillEl = document.createElement('div');
+    this._frameBgFillEl.className = 'canvas-frame-bg-fill';
+    this.wrapEl.insertBefore(this._frameBgFillEl, this.paintingEl);
+    this._frameBgFillEl.style.display = 'none';
+
+    // Visual frame: border (always shown to frame the drawing area)
+    this._frameBgEl = document.createElement('div');
+    this._frameBgEl.className = 'canvas-frame-bg';
+    this.wrapEl.appendChild(this._frameBgEl);
+    this._frameBgEl.style.display = 'none';
+
     // Pointer events
     const dc = this.drawCanvas;
     dc.style.touchAction = 'none';
@@ -86,8 +103,21 @@ FP.PaintingCanvas = class {
     dc.addEventListener('contextmenu', e => e.preventDefault());
   }
 
+  // ── Coloring Page Management ────────────────────────────────
+  /**
+   * Set the natural dimensions of a coloring page (in painting units).
+   * Pass null to clear (revert to blank canvas scaling).
+   */
+  setPageDimensions(width, height, isFrameMode) {
+    this._pageWidth  = width;
+    this._pageHeight = height;
+    this._maxPaintingH = height || null;
+    // Store frame mode for use in setRect
+    this._isFrameMode = isFrameMode;
+  }
+
   // ── Layout ──────────────────────────────────────────────────
-  setRect({ left, top, width, height }) {
+  setRect({ left, top, width, height }, isFrameMode) {
     // Wrap matches the visible rectangle (clips overflow)
     this.wrapEl.style.left    = left   + 'px';
     this.wrapEl.style.top     = top    + 'px';
@@ -95,23 +125,76 @@ FP.PaintingCanvas = class {
     this.wrapEl.style.height  = height + 'px';
     this.wrapEl.style.overflow = 'hidden';
 
-    // Expand backing canvas if visible area needs more height
-    const neededH = Math.ceil(height / width * PAINTING_W);
-    this._visibleH = neededH;
-    if (neededH > this._paintingH) this._expandCanvas(neededH);
+    // Update frame mode for alignment decisions
+    if (isFrameMode !== undefined) this._isFrameMode = isFrameMode;
 
-    // paintingEl fills the full visible rect
-    this.paintingEl.style.left   = '0px';
-    this.paintingEl.style.top    = '0px';
-    this.paintingEl.style.width  = width  + 'px';
-    this.paintingEl.style.height = height + 'px';
+    // Compute scale and positioning based on coloring page aspect ratio
+    let canvasWidth, canvasHeight, paintingElLeft, paintingElTop;
+    const hasColoringPage = this._pageWidth !== null && this._pageHeight !== null;
 
-    // Canvas CSS width = 100% (from stylesheet); height maintains backing aspect ratio.
-    // If _paintingH > neededH (retained from a past tall portrait), the canvas overflows
-    // paintingEl below — wrapEl overflow:hidden clips it so only the visible area shows.
-    const cssH = width * this._paintingH / PAINTING_W;
+    if (hasColoringPage) {
+      const pageAspectRatio = this._pageWidth / this._pageHeight;
+      const frameAspectRatio = width / height;
+
+      if (pageAspectRatio >= frameAspectRatio) {
+        // Page is wider or equal: fit to width
+        canvasWidth = width;
+        canvasHeight = width * this._pageHeight / this._pageWidth;
+        paintingElLeft = 0;
+        // In frame mode, center vertically; in expanded mode, align top
+        paintingElTop = this._isFrameMode ? (height - canvasHeight) / 2 : 0;
+      } else {
+        // Page is taller: fit to height and center horizontally
+        canvasHeight = height;
+        canvasWidth = height * this._pageWidth / this._pageHeight;
+        paintingElLeft = (width - canvasWidth) / 2;
+        paintingElTop = 0; // Always top-aligned when fitting to height
+      }
+
+      // Update backing canvas height if needed
+      const neededH = Math.ceil(canvasHeight / canvasWidth * PAINTING_W);
+      this._visibleH = neededH;
+      if (neededH > this._paintingH) this._expandCanvas(neededH);
+    } else {
+      // No coloring page: use current behavior (fill width)
+      const neededH = Math.ceil(height / width * PAINTING_W);
+      this._visibleH = neededH;
+      if (neededH > this._paintingH) this._expandCanvas(neededH);
+
+      canvasWidth = width;
+      canvasHeight = width * this._paintingH / PAINTING_W;
+      paintingElLeft = 0;
+      paintingElTop = 0;
+    }
+
+    // paintingEl positioned based on canvas sizing
+    this.paintingEl.style.left   = paintingElLeft + 'px';
+    this.paintingEl.style.top    = paintingElTop  + 'px';
+    this.paintingEl.style.width  = canvasWidth    + 'px';
+    this.paintingEl.style.height = canvasHeight   + 'px';
+
+    // Canvas CSS height maintains backing aspect ratio
+    const cssH = canvasWidth * this._paintingH / PAINTING_W;
     this.bgCanvas.style.height   = cssH + 'px';
     this.drawCanvas.style.height = cssH + 'px';
+
+    // Update grey background fill (visible only when a coloring page is loaded)
+    if (hasColoringPage) {
+      this._frameBgFillEl.style.display = 'block';
+      this._frameBgFillEl.style.left     = '0px';
+      this._frameBgFillEl.style.top      = '0px';
+      this._frameBgFillEl.style.width    = width  + 'px';
+      this._frameBgFillEl.style.height   = height + 'px';
+    } else {
+      this._frameBgFillEl.style.display = 'none';
+    }
+
+    // Update canvas border (always shown to frame the drawing area)
+    this._frameBgEl.style.display = 'block';
+    this._frameBgEl.style.left     = '0px';
+    this._frameBgEl.style.top      = '0px';
+    this._frameBgEl.style.width    = width  + 'px';
+    this._frameBgEl.style.height   = height + 'px';
   }
 
   // ── Tool state ──────────────────────────────────────────────
@@ -123,6 +206,7 @@ FP.PaintingCanvas = class {
   fillBackground(color) {
     this._currentBgColor = color;
     this._bgImageH = 0;   // solid fill — no image-based extent
+    this.setPageDimensions(null, null);  // clear page dimensions
     this._fillBg(color);
     this.wrapEl.style.background = color;
   }
@@ -131,6 +215,8 @@ FP.PaintingCanvas = class {
   setBackgroundImage(image) {
     const imgH = Math.round(image.naturalHeight / image.naturalWidth * PAINTING_W);
     this._bgImageH = imgH;
+    // Store page dimensions for aspect-ratio-aware scaling
+    this.setPageDimensions(PAINTING_W, imgH);
     this._resizeCanvas(imgH);
 
     const ctx = this.bgCtx;
@@ -172,6 +258,7 @@ FP.PaintingCanvas = class {
         : 0;
       const targetH = Math.max(bgH, drawH);
       this._bgImageH = bgH;
+      this.setPageDimensions(null, null);  // clear page dimensions for saved entries
       this._resizeCanvas(targetH);
 
       // Background layer
@@ -207,6 +294,7 @@ FP.PaintingCanvas = class {
         // Scale to PAINTING_W wide, maintain aspect ratio
         const scaledH = Math.round(img.naturalHeight / img.naturalWidth * PAINTING_W);
         this._bgImageH = scaledH;
+        this.setPageDimensions(null, null);  // clear page dimensions for saved entries
         this._resizeCanvas(scaledH);
 
         this.bgCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
@@ -241,7 +329,11 @@ FP.PaintingCanvas = class {
 
   /** Full reset — bg white + empty drawing. */
   reset() {
-    this.fillBackground('#ffffff');
+    this._currentBgColor = '#ffffff';
+    this._bgImageH = 0;
+    this.setPageDimensions(null, null);  // clear page dimensions
+    this._fillBg('#ffffff');
+    this.wrapEl.style.background = '#ffffff';
     this.clearDrawing();
   }
 
@@ -283,32 +375,101 @@ FP.PaintingCanvas = class {
     return out.toDataURL('image/png');
   }
 
-  /** Smaller PNG using the top PAINTING_W×PAINTING_W square for thumbnails. */
+  /** Smaller PNG for thumbnails. Fills square with center alignment (like page scaling). */
   toThumbnailDataURL(size = 160) {
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');
-    ox.drawImage(this.bgCanvas,   0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
-    ox.drawImage(this.drawCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+
+    // If coloring page loaded, use aspect-ratio-aware scaling (center-aligned)
+    if (this._pageWidth !== null && this._pageHeight !== null) {
+      const pageAspectRatio = this._pageWidth / this._pageHeight;
+
+      // Sample the full page content from the canvas
+      const srcX = 0;
+      const srcY = 0;
+      const srcW = PAINTING_W;
+      const srcH = this._pageHeight;
+
+      // Calculate destination dimensions to fit into the square with center alignment
+      let destX, destY, destW, destH;
+
+      if (pageAspectRatio >= 1) {
+        // Landscape page: fit to height, overflow left/right → center horizontally
+        destH = size;
+        destW = Math.round(size * pageAspectRatio);
+        destY = 0;
+        destX = (size - destW) / 2;
+      } else {
+        // Portrait page: fit to width, overflow top/bottom → center vertically
+        destW = size;
+        destH = Math.round(size / pageAspectRatio);
+        destX = 0;
+        destY = (size - destH) / 2;
+      }
+
+      // Fill with white background
+      ox.fillStyle = '#ffffff';
+      ox.fillRect(0, 0, size, size);
+
+      // Draw the page content centered
+      ox.drawImage(this.bgCanvas,   srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.drawCanvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+    } else {
+      // Blank canvas: use the standard square capture (zoom-to-fill top-left)
+      ox.drawImage(this.bgCanvas,   0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+      ox.drawImage(this.drawCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+    }
+
     return out.toDataURL('image/png');
   }
 
   // ── Page-flip animation ─────────────────────────────────────
   /** Runs `midActionFn` at the midpoint of a 2-stage CSS flip. */
-  async pageFlip(midActionFn) {
+  /**
+   * Page transition animation. Supports multiple styles:
+   * - 'flip' (default): 3D page flip
+   * - 'fade': Simple fade out/in (resize invisible)
+   * - 'crossfade': Simultaneous crossfade between pages
+   * - 'slide': Slide up transition
+   * - 'wipe': Wipe transition from right
+   *
+   * @param {Function} midActionFn - Called at animation midpoint to load new page
+   * @param {string} style - Animation style
+   * @param {Function} postLoadFn - Called after page loaded, before flip-in animation (optional)
+   */
+  async pageFlip(midActionFn, style = 'flip', postLoadFn = null) {
     FP.playSound('pageTurn');
     const el = this.paintingEl;
-    el.classList.remove('flipping-in', 'flipping-out');
+
+    // Map animation style to CSS class prefixes
+    const classMap = {
+      flip: { out: 'flipping-out', in: 'flipping-in' },
+      fade: { out: 'anim-fade-out', in: 'anim-fade-in' },
+      crossfade: { out: 'anim-crossfade-out', in: 'anim-crossfade-in' },
+      slide: { out: 'anim-slide-out', in: 'anim-slide-in' },
+      wipe: { out: 'anim-wipe-out', in: 'anim-wipe-in' },
+    };
+    const classes = classMap[style] || classMap.flip;
+
+    // Remove all animation classes
+    el.classList.remove('flipping-in', 'flipping-out', 'anim-fade-out', 'anim-fade-in',
+                        'anim-crossfade-out', 'anim-crossfade-in', 'anim-slide-out',
+                        'anim-slide-in', 'anim-wipe-out', 'anim-wipe-in');
     // force reflow so re-adding class re-triggers animation
     void el.offsetWidth;
-    el.classList.add('flipping-out');
+    el.classList.add(classes.out);
     await _wait(FLIP_HALF_MS);
     try { await midActionFn(); } catch (e) { console.warn('pageFlip mid action failed', e); }
-    el.classList.remove('flipping-out');
+    // Allow post-load callback to apply new rect before flip-in animation starts
+    if (postLoadFn) {
+      try { await postLoadFn(); } catch (e) { console.warn('pageFlip post-load failed', e); }
+    }
+    el.classList.remove(classes.out);
     void el.offsetWidth;
-    el.classList.add('flipping-in');
+    el.classList.add(classes.in);
     await _wait(FLIP_HALF_MS);
-    el.classList.remove('flipping-in');
+    el.classList.remove(classes.in);
   }
 
   // ── Pointer handlers ────────────────────────────────────────
@@ -403,7 +564,13 @@ FP.PaintingCanvas = class {
 
   /** Expand backing canvas to newH, preserving all content. */
   _expandCanvas(newH) {
+    // If a coloring page is loaded, clamp to the page bounds
+    if (this._maxPaintingH !== null) {
+      newH = Math.min(newH, this._maxPaintingH);
+    }
+
     const oldH = this._paintingH;
+    if (newH <= oldH) return;  // No expansion needed
 
     const snapBg   = document.createElement('canvas');
     const snapDraw = document.createElement('canvas');
@@ -480,6 +647,53 @@ FP.PaintingCanvas = class {
     if (this.dirtySinceLoad === d) return;
     this.dirtySinceLoad = d;
     if (this.onDirtyChange) this.onDirtyChange(d);
+  }
+
+  /**
+   * Static helper: Generate a thumbnail from an image element.
+   * Uses aspect-ratio-aware center alignment (fills square with overflow).
+   */
+  static generateThumbnailFromImage(image, size = 160) {
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    const ox = out.getContext('2d');
+
+    const imgW = image.naturalWidth;
+    const imgH = image.naturalHeight;
+    const pageAspectRatio = imgW / imgH;
+
+    // Fill with white background
+    ox.fillStyle = '#ffffff';
+    ox.fillRect(0, 0, size, size);
+
+    let srcX, srcY, srcW, srcH, destX, destY, destW, destH;
+
+    if (pageAspectRatio >= 1) {
+      // Landscape image: fit to height, overflow left/right → center horizontally
+      srcH = imgH;
+      srcW = Math.round(srcH * pageAspectRatio);
+      srcY = 0;
+      srcX = Math.max(0, (srcW - imgW) / 2);
+
+      destH = size;
+      destW = Math.round(size * pageAspectRatio);
+      destY = (size - destH) / 2;
+      destX = (size - destW) / 2;
+    } else {
+      // Portrait image: fit to width, overflow top/bottom → center vertically
+      srcW = imgW;
+      srcH = Math.round(srcW / pageAspectRatio);
+      srcX = 0;
+      srcY = Math.max(0, (srcH - imgH) / 2);
+
+      destW = size;
+      destH = Math.round(size / pageAspectRatio);
+      destX = (size - destW) / 2;
+      destY = (size - destH) / 2;
+    }
+
+    ox.drawImage(image, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+    return out.toDataURL('image/png');
   }
 };
 
