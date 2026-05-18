@@ -301,7 +301,9 @@
       }
     }
 
-    canvasComp.setRect(canvasRect, state.frameMode);
+    // In Crayon mode, use expanded-mode alignment (top/left) to avoid centering
+    const rectFrameMode = state.frameMode && !CFG.clearOnly;
+    canvasComp.setRect(canvasRect, rectFrameMode);
 
     // Clear layers
     panelLayer.innerHTML  = '';
