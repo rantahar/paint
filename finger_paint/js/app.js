@@ -314,7 +314,8 @@
 
   function renderPanels(layout) {
     layout.panels.forEach((p, idx) => {
-      // In Crayon mode, skip the save bar panel background (last panel in layout.panels)
+      // In Crayon mode, always skip the save bar panel background (last panel in layout.panels)
+      // This applies to all content types (coloring pages, regular backgrounds, blank canvas)
       if (CFG.clearOnly && idx === layout.panels.length - 1) return;
 
       const el = document.createElement('div');
@@ -682,12 +683,12 @@
     } else {
       // No autosave: generate a smooth canvas thumbnail from the page image
       FP.coloringBook.loadImage(page).then(image => {
-        const thumbDataUrl = FP.PaintingCanvas.generateThumbnailFromImage(image, B);
+        const thumbDataUrl = FP.PaintingCanvas.generateThumbnailFromImage(image, 160);
         const img = document.createElement('img');
         img.src = thumbDataUrl;
         img.alt = '';
-        // Only append if the button still exists and page hasn't changed
-        if (btn.parentNode && state.currentColoringPageId !== page.id) {
+        // Only append if the button still exists (it may have been removed by scrolling)
+        if (btn.parentNode) {
           btn.appendChild(img);
         }
       }).catch(err => {

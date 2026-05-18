@@ -371,29 +371,27 @@ FP.PaintingCanvas = class {
     // If coloring page loaded, use aspect-ratio-aware scaling (center-aligned)
     if (this._pageWidth !== null && this._pageHeight !== null) {
       const pageAspectRatio = this._pageWidth / this._pageHeight;
-      let srcX, srcY, srcW, srcH, destX, destY, destW, destH;
+
+      // Sample the full page content from the canvas
+      const srcX = 0;
+      const srcY = 0;
+      const srcW = PAINTING_W;
+      const srcH = this._pageHeight;
+
+      // Calculate destination dimensions to fit into the square with center alignment
+      let destX, destY, destW, destH;
 
       if (pageAspectRatio >= 1) {
         // Landscape page: fit to height, overflow left/right → center horizontally
-        srcH = this._pageHeight;
-        srcW = Math.round(srcH * pageAspectRatio);
-        srcY = 0;
-        srcX = Math.max(0, (srcW - PAINTING_W) / 2);
-
         destH = size;
         destW = Math.round(size * pageAspectRatio);
-        destY = (size - destH) / 2;
+        destY = 0;
         destX = (size - destW) / 2;
       } else {
         // Portrait page: fit to width, overflow top/bottom → center vertically
-        srcW = this._pageWidth;
-        srcH = Math.round(srcW / pageAspectRatio);
-        srcX = 0;
-        srcY = Math.max(0, (srcH - PAINTING_W) / 2);
-
         destW = size;
         destH = Math.round(size / pageAspectRatio);
-        destX = (size - destW) / 2;
+        destX = 0;
         destY = (size - destH) / 2;
       }
 
