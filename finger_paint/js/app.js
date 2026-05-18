@@ -288,9 +288,9 @@
     let canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
 
     // In Crayon mode, when a coloring page is loaded, don't constrain frame by save bar
-    // Use full window dimensions for aspect ratio calculation
+    // Use full window dimensions (top-left = 0,0) for aspect ratio calculation
     if (CFG.clearOnly && state.currentColoringPageId && state.frameMode) {
-      canvasRect = { left: canvasRect.left, top: canvasRect.top, width: w, height: h };
+      canvasRect = { left: 0, top: 0, width: w, height: h };
     }
 
     canvasComp.setRect(canvasRect, state.frameMode);
@@ -309,7 +309,10 @@
   }
 
   function renderPanels(layout) {
-    layout.panels.forEach(p => {
+    layout.panels.forEach((p, idx) => {
+      // In Crayon mode, skip the save bar panel background (last panel in layout.panels)
+      if (CFG.clearOnly && idx === layout.panels.length - 1) return;
+
       const el = document.createElement('div');
       el.className = 'panel-bg';
       if (p.borders) {

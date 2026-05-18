@@ -362,51 +362,8 @@ FP.PaintingCanvas = class {
     return out.toDataURL('image/png');
   }
 
-  /** Smaller PNG for thumbnails. If coloring page is loaded, captures it with aspect-ratio awareness. */
+  /** Smaller PNG using the top PAINTING_W×PAINTING_W square for thumbnails. Always zoom-to-fill. */
   toThumbnailDataURL(size = 160) {
-    if (this._pageWidth !== null && this._pageHeight !== null) {
-      // Coloring page: capture the full page with aspect-ratio preservation
-      const pageAspectRatio = this._pageWidth / this._pageHeight;
-
-      // Fit page into a square thumbnail with padding
-      let srcW, srcH, destX = 0, destY = 0;
-      if (pageAspectRatio >= 1) {
-        // Wide page
-        srcW = PAINTING_W;
-        srcH = Math.round(PAINTING_W / pageAspectRatio);
-      } else {
-        // Tall page
-        srcW = Math.round(this._pageHeight * pageAspectRatio);
-        srcH = this._pageHeight;
-      }
-
-      const out = document.createElement('canvas');
-      out.width = out.height = size;
-      const ox = out.getContext('2d');
-
-      // Fill with white background
-      ox.fillStyle = '#ffffff';
-      ox.fillRect(0, 0, size, size);
-
-      // Calculate dimensions to fit the page aspect ratio in the square
-      let destW, destH;
-      if (pageAspectRatio >= 1) {
-        destW = size;
-        destH = Math.round(size / pageAspectRatio);
-        destY = (size - destH) / 2;
-      } else {
-        destH = size;
-        destW = Math.round(size * pageAspectRatio);
-        destX = (size - destW) / 2;
-      }
-
-      // Draw the page content centered
-      ox.drawImage(this.bgCanvas,   0, 0, srcW, srcH, destX, destY, destW, destH);
-      ox.drawImage(this.drawCanvas, 0, 0, srcW, srcH, destX, destY, destW, destH);
-      return out.toDataURL('image/png');
-    }
-
-    // Blank canvas: use the original square capture behavior
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');
