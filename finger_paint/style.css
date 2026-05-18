@@ -219,7 +219,6 @@ body.dialog-open .btn {
 /* ── Canvas border (frame around drawing area) ── */
 .canvas-frame-bg {
   position: absolute;
-  background: transparent;
   border: 1px solid rgba(0,0,0,0.1);
   pointer-events: none;
   z-index: 2;

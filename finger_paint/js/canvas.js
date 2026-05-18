@@ -178,6 +178,8 @@ FP.PaintingCanvas = class {
     this._frameBgEl.style.top      = '0px';
     this._frameBgEl.style.width    = width  + 'px';
     this._frameBgEl.style.height   = height + 'px';
+    // Show grey background only when a coloring page is loaded (indicates constrained area)
+    this._frameBgEl.style.background = hasColoringPage ? 'rgba(242,240,235,0.85)' : 'transparent';
   }
 
   // ── Tool state ──────────────────────────────────────────────
