@@ -714,6 +714,7 @@
     });
     if (bg) b.style.background = bg;
     if (innerHTML) b.innerHTML = innerHTML;
+    b.addEventListener('contextmenu', e => e.preventDefault());
     if (onTap && !disabled) {
       b.addEventListener('pointerdown', (e) => {
         // Only color swatches participate in tap-drag-to-canvas: dragging off
