@@ -291,9 +291,9 @@
     // Reposition canvas based on frame mode
     let canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
 
-    // In Crayon mode, when a coloring page is loaded, use full window in one axis
+    // In Crayon mode, use full window in one axis (applies to all content: coloring pages, blank, etc)
     // Landscape: full height, constrained width. Portrait: full width, constrained height
-    if (CFG.clearOnly && state.currentColoringPageId && state.frameMode) {
+    if (CFG.clearOnly && state.frameMode) {
       if (layout.orientation === 'landscape') {
         canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: layout.canvas.width, height: h };
       } else {
@@ -301,9 +301,7 @@
       }
     }
 
-    // In Crayon mode, use expanded-mode alignment (top/left) to avoid centering
-    const rectFrameMode = state.frameMode && !CFG.clearOnly;
-    canvasComp.setRect(canvasRect, rectFrameMode);
+    canvasComp.setRect(canvasRect, state.frameMode);
 
     // Clear layers
     panelLayer.innerHTML  = '';
