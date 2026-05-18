@@ -30,7 +30,7 @@
 
   // ── Page flip animation style (configurable) ──────────────────
   // Options: 'flip' (default), 'fade', 'crossfade', 'slide', 'wipe'
-  const PAGE_FLIP_ANIMATION = 'fade';
+  const PAGE_FLIP_ANIMATION = CFG.pageFlipAnimation || 'flip';
 
   // ── Brush size scale (painting units, 1000-scale) ─────────────
   const SIZE_LEVELS = [4, 6, 9, 13, 18, 24, 32, 42, 56, 72];
@@ -307,7 +307,8 @@
     panelLayer.innerHTML  = '';
     buttonLayer.innerHTML = '';
 
-    if (state.frameMode) {
+    // In Crayon mode, never show the toolbar panel backgrounds
+    if (state.frameMode && !CFG.clearOnly) {
       renderPanels(layout);
     }
     renderColorSwatches(layout);
@@ -1171,6 +1172,9 @@
       state.loadedDrawingEntry      = null;
       state.savedJustNow            = false;
       enableBtn('save');
+
+      // Automatically switch to frame view when loading a coloring page
+      state.frameMode = true;
     }, PAGE_FLIP_ANIMATION, () => {
       // After page loaded, update rect during animation (before flip-in starts)
       renderAll();
