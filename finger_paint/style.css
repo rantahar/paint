@@ -83,6 +83,8 @@ html, body {
   overflow: hidden;
   font: inherit;
   color: inherit;
+  user-select: none;
+  -webkit-user-select: none;
   transition: transform 60ms ease-out, outline-offset 60ms ease-out;
   pointer-events: auto;
 }
