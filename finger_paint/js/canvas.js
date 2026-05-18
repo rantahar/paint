@@ -172,16 +172,12 @@ FP.PaintingCanvas = class {
     this.bgCanvas.style.height   = cssH + 'px';
     this.drawCanvas.style.height = cssH + 'px';
 
-    // Update visual frame background
-    if (hasColoringPage) {
-      this._frameBgEl.style.display = 'block';
-      this._frameBgEl.style.left     = '0px';
-      this._frameBgEl.style.top      = '0px';
-      this._frameBgEl.style.width    = width  + 'px';
-      this._frameBgEl.style.height   = height + 'px';
-    } else {
-      this._frameBgEl.style.display = 'none';
-    }
+    // Update canvas border (always shown to frame the drawing area)
+    this._frameBgEl.style.display = 'block';
+    this._frameBgEl.style.left     = '0px';
+    this._frameBgEl.style.top      = '0px';
+    this._frameBgEl.style.width    = width  + 'px';
+    this._frameBgEl.style.height   = height + 'px';
   }
 
   // ── Tool state ──────────────────────────────────────────────
