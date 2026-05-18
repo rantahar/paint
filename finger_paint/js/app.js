@@ -347,7 +347,10 @@
         active = (state.activeBrushId === t.id);
       } else if (t.kind === 'sizeIndicator') {
         indicator = true;
-        const dotPercent = _sizeDotPercent(state.sizeIdx, layout.canvas.width, layout.B);
+        // In expanded mode the canvas is the full window, not layout.canvas — use
+        // the actual canvas width so the dot tracks the painted stroke in either mode.
+        const canvasCssW = state.frameMode ? layout.canvas.width : window.innerWidth;
+        const dotPercent = _sizeDotPercent(state.sizeIdx, canvasCssW, layout.B);
         inner = `<div class="size-dot" style="width:${dotPercent}%;height:${dotPercent}%;"></div>`;
       } else {
         // sizeUp / sizeDown / bgFill
