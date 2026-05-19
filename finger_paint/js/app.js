@@ -134,6 +134,19 @@
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
+    // Handle ?deletealldrawings=true BEFORE opening any IDB connections.
+    // deleteDatabase blocks until all open connections to that DB are closed,
+    // so if we opened storage/coloringBook here first the request would hang
+    // forever and init() would stall mid-await with a blank canvas on screen.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('deletealldrawings') === 'true') {
+      try { await _deleteAllDrawings(); }
+      catch (err) { console.error('Failed to delete databases', err); }
+      // Navigate to the clean URL (strips the param and reloads in one step).
+      location.replace(window.location.pathname);
+      return;
+    }
+
     appRoot = document.getElementById('app');
 
     // Layers (back to front): panel bgs → painting → buttons (buttons sit on top)
@@ -155,15 +168,6 @@
 
     // Open IndexedDB for both storage modules before first render
     await Promise.all([FP.storage.init(), FP.coloringBook.init()]);
-
-    // Handle ?deletealldrawings=true URL parameter
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('deletealldrawings') === 'true') {
-      await _deleteAllDrawings();
-      // Remove the query param and reload
-      window.history.replaceState({}, '', window.location.pathname);
-      return;
-    }
 
     // Load saved drawings
     state.saved = FP.storage.list();
@@ -814,26 +818,22 @@
   }
 
   // ── Delete all drawings ───────────────────────────────────────
-  async function _deleteAllDrawings() {
-    // Delete both regular drawings and coloring book autosaves
-    return Promise.all([
-      new Promise((resolve, reject) => {
-        const req = indexedDB.deleteDatabase('fingerPaint.drawings');
-        req.onsuccess = resolve;
-        req.onerror   = () => reject(req.error);
-      }),
-      new Promise((resolve, reject) => {
-        const req = indexedDB.deleteDatabase('fingerPaint.coloringBook');
-        req.onsuccess = resolve;
-        req.onerror   = () => reject(req.error);
-      }),
-    ]).then(() => {
-      console.log('All drawings and coloring pages cleared');
-      location.reload();
-    }).catch(err => {
-      console.error('Failed to delete databases', err);
-      location.reload();
+  // Names must match storage.js DB_NAME ('fingerPaint.drawings') and
+  // coloringBook.js CB_DB_NAME ('fingerPaint.coloring'). The caller is
+  // responsible for navigating to a clean URL afterwards — we don't
+  // reload here so the param-strip can be atomic via location.replace().
+  function _deleteAllDrawings() {
+    const del = (name) => new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = resolve;
+      req.onerror   = () => reject(req.error);
+      req.onblocked = () => {
+        // Should never happen because init() runs the delete BEFORE opening
+        // either DB, but log loudly if it does so the next dev finds it.
+        console.warn('deleteDatabase blocked: connection still open for ' + name);
+      };
     });
+    return Promise.all([del('fingerPaint.drawings'), del('fingerPaint.coloring')]);
   }
 
   // ── Handlers ──────────────────────────────────────────────────
@@ -882,19 +882,27 @@
   }
 
   function handleBgFillTap() {
-    _leavingColoringPage();
+    const onColoringPage = !!state.currentColoringPageId;
+    // On a coloring page: fill the solid-bg layer (the outline + overlay layers
+    // stay intact, so the page lines are preserved over the new color).
+    // Elsewhere: keep legacy behavior (leave any loaded saved drawing).
+    if (!onColoringPage) _leavingColoringPage();
     const c = state.palette[state.activeColorIdx];
     canvasComp.fillBackground(c);
     // Auto-switch to opposite column color (flip LSB)
     state.activeColorIdx = state.activeColorIdx ^ 1;
     canvasComp.setColor(state.palette[state.activeColorIdx]);
-    onCanvasContentChanged();
+    if (onColoringPage) {
+      autosaveCurrentColoringPage();
+    } else {
+      onCanvasContentChanged();
+    }
     renderAll();
     FP.playSound('bgFill');
   }
 
   async function handleClearTap() {
-    // If blank canvas is loaded, just clear the drawing
+    // Blank canvas mode: just clear the drawing.
     if (state.currentColoringPageId === '__blank-white') {
       await canvasComp.pageFlip(async () => {
         canvasComp.clearDrawing();
@@ -904,21 +912,16 @@
       FP.playSound('deleteDrawing');
       return;
     }
-    // If a coloring page is loaded, reload it with cleared drawings.
+    // On a coloring page: wipe strokes but preserve the chosen bg color,
+    // outline, and overlay. Hard-reset (drop bg color too) is still reachable
+    // via double-tap on the thumbnail → handleColoringPageReloadConfirm.
     if (state.currentColoringPageId) {
-      const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
-      if (page) {
-        state.coloringConfirmReloadId = null;
-        FP.coloringBook.removeAutosave(page.id);
-        await canvasComp.pageFlip(async () => {
-          const img = await FP.coloringBook.loadImage(page);
-          canvasComp.setBackgroundImage(img);
-          canvasComp.clearDrawing();
-        }, PAGE_FLIP_ANIMATION, () => {
-          renderAll();
-        });
-        FP.playSound('deleteDrawing');
-      }
+      await canvasComp.pageFlip(async () => {
+        canvasComp.clearDrawing();
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
+      });
+      autosaveCurrentColoringPage();
       return;
     }
     if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
@@ -1220,8 +1223,11 @@
     state.coloringConfirmReloadId = null;
     FP.coloringBook.removeAutosave(page.id);
     await canvasComp.pageFlip(async () => {
-      const img = await FP.coloringBook.loadImage(page);
-      canvasComp.setBackgroundImage(img);
+      const [img, overlayImg] = await Promise.all([
+        FP.coloringBook.loadImage(page),
+        FP.coloringBook.loadOverlay(page),
+      ]);
+      canvasComp.setColoringPage(img, overlayImg, '#ffffff');
       canvasComp.clearDrawing();
     }, PAGE_FLIP_ANIMATION, () => {
       renderAll();
@@ -1231,15 +1237,25 @@
 
   async function loadColoringPage(page) {
     const autosave = FP.coloringBook.getAutosave(page.id);
-    // Load the page image to get dimensions for aspect-ratio-aware scaling
-    const img = await FP.coloringBook.loadImage(page);
+    // Load the page image (and overlay companion, if present)
+    const [img, overlayImg] = await Promise.all([
+      FP.coloringBook.loadImage(page),
+      FP.coloringBook.loadOverlay(page),
+    ]);
     const imgH = Math.round(img.naturalHeight / img.naturalWidth * 1000);  // PAINTING_W = 1000
 
     await canvasComp.pageFlip(async () => {
-      if (autosave && autosave.bg) {
+      if (autosave && autosave.bgColor) {
+        // New layered format: rebuild outline+overlay from page image, apply saved bg + draw.
+        canvasComp.setColoringPage(img, overlayImg, autosave.bgColor);
+        await canvasComp.setDrawingFromDataUrl(autosave.draw);
+      } else if (autosave && autosave.bg) {
+        // Legacy: bg was flattened (page outline baked into bg). Use loadLayersFromDataUrls
+        // which wipes our new outline/overlay layers and shows the baked composite.
         await canvasComp.loadLayersFromDataUrls(autosave.bg, autosave.draw);
       } else {
-        canvasComp.setBackgroundImage(img);
+        // Fresh load: clean four-layer setup with default white bg.
+        canvasComp.setColoringPage(img, overlayImg, '#ffffff');
         canvasComp.clearDrawing();
       }
       // Set page dimensions for aspect-ratio-aware scaling (even for autosaves)
@@ -1262,15 +1278,16 @@
 
   async function loadBlankCanvas() {
     await canvasComp.pageFlip(async () => {
-      canvasComp.fillBackground('#ffffff');
-      canvasComp.clearDrawing();
+      // reset() clears all four layers (bg → white, outline + overlay wiped,
+      // strokes wiped) and clears page dimensions in one call. We need the
+      // full four-layer cleanup here because the user may be transitioning
+      // *from* a coloring page whose outline/overlay would otherwise leak.
+      canvasComp.reset();
       state.currentColoringPageId   = '__blank-white';  // Mark as blank canvas mode
       state.coloringConfirmReloadId = null;
       state.loadedDrawingId         = null;
       state.loadedDrawingEntry      = null;
       state.savedJustNow            = false;
-      // Clear page dimensions when loading blank canvas
-      canvasComp.setPageDimensions(null, null);
       enableBtn('save');
       // Automatically switch to frame view
       state.frameMode = true;
@@ -1286,10 +1303,10 @@
     try {
       const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
       FP.coloringBook.setAutosave(state.currentColoringPageId, {
-        bg:    canvasComp.toBackgroundDataURL(),
-        draw:  canvasComp.toDrawingDataURL(),
-        thumb: canvasComp.toThumbnailDataURL(),
-        name:  page ? page.name : state.currentColoringPageId,
+        bgColor: canvasComp.getBgColor(),
+        draw:    canvasComp.toStrokesOnlyDataURL(),
+        thumb:   canvasComp.toThumbnailDataURL(),
+        name:    page ? page.name : state.currentColoringPageId,
       });
     } catch (e) {
       // Likely a tainted canvas (cross-origin source) — autosave is a best-effort.

@@ -60,38 +60,49 @@ fi
 for png in source/*.png; do
   [ -e "$png" ] || continue
   filename=$(basename "$png")
+  # Custom overlay companions (<base>_overlay.png) are passed through unchanged
+  # below — skip them here so the artist's alpha isn't squashed.
+  case "$filename" in
+    *_overlay.png) continue ;;
+  esac
   output="processed/$filename"
 
   if [ -n "$MAGICK_CMD" ]; then
     echo "  $filename"
-    if [[ "$MAGICK_CMD" == *"magick.exe"* ]]; then
-      # ImageMagick 7: use 'magick' (not deprecated 'convert')
-      "$MAGICK_CMD" "$png" \
-        -colorspace Gray \
-        -trim \
-        -resize '1000x>' \
-        -quality 85 \
-        -colors 256 \
-        "+dither" \
-        -depth 8 \
-        "$output"
-    else
-      # Older ImageMagick or standalone convert
-      "$MAGICK_CMD" "$png" \
-        -colorspace Gray \
-        -trim \
-        -resize '1000x>' \
-        -quality 85 \
-        -colors 256 \
-        "+dither" \
-        -depth 8 \
-        "$output"
-    fi
+    # Greyscale + trim + resize, then luminance → alpha.
+    # Algorithm: alpha = 255 - luma, RGB forced to black.
+    #   1. -negate       inverts grey channel (black src → white, white src → black)
+    #   2. -alpha copy   copies the inverted intensity into a new alpha channel
+    #   3. -fill black -colorize 100   forces RGB to black, leaves alpha intact
+    # Result: black lines opaque, white paper transparent, anti-aliased greys
+    # become semi-transparent BLACK (not grey-on-bg) over the runtime bg color.
+    #
+    # We deliberately do NOT use `-alpha set ( +clone -negate )` — `-negate`
+    # touches the alpha channel when one is present, which flips alpha=255 → 0
+    # and produces an entirely transparent output.
+    "$MAGICK_CMD" "$png" \
+      -colorspace Gray \
+      -trim \
+      -resize '1000x>' \
+      -negate \
+      -alpha copy \
+      -fill black -colorize 100 \
+      -depth 8 \
+      "$output"
   else
     echo "warning: ImageMagick not installed; skipping processing" >&2
-    # Fallback: copy unprocessed
+    # Fallback: copy unprocessed (runtime luminance-to-alpha will still kick in).
     cp "$png" "$output"
   fi
+done
+
+# Copy custom overlay PNGs unchanged (artist controls the alpha)
+echo "Copying overlay companions..."
+for png in source/*_overlay.png; do
+  [ -e "$png" ] || continue
+  filename=$(basename "$png")
+  cp "$png" "processed/$filename"
+  echo "  $filename"
 done
 
 # Copy SVGs unchanged
@@ -103,16 +114,27 @@ for svg in source/*.svg; do
   echo "  $filename"
 done
 
-# Collect image files from processed/ for manifest
+# Collect image files from processed/ for manifest. Overlay companions
+# (<base>_overlay.<ext>) are paired with their base entry rather than listed
+# as standalone pages.
 pages=()
 for f in processed/*.png processed/*.jpg processed/*.jpeg processed/*.gif processed/*.webp processed/*.svg; do
   [ -e "$f" ] || continue
   filename=$(basename "$f")
+  case "$filename" in
+    *_overlay.*) continue ;;
+  esac
   name_base="${filename%.*}"
+  ext="${filename##*.}"
   pretty=$(echo "$name_base" \
     | sed -E 's/[-_]+/ /g' \
     | sed -E 's/(^| )([a-z])/\1\u\2/g')
-  pages+=("    { \"file\": \"processed/$filename\", \"name\": \"$pretty\" }")
+  overlay_name="${name_base}_overlay.${ext}"
+  if [ -e "processed/$overlay_name" ]; then
+    pages+=("    { \"file\": \"processed/$filename\", \"name\": \"$pretty\", \"overlay\": \"processed/$overlay_name\" }")
+  else
+    pages+=("    { \"file\": \"processed/$filename\", \"name\": \"$pretty\" }")
+  fi
 done
 
 # Write manifest.json (deterministically sorted file order matches `*` glob)

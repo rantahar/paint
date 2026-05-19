@@ -50,9 +50,10 @@ function _coloringDir() {
 let _discoverPromise = null;
 let _cachedPages     = [];
 const _imageCache    = new Map();   // id → HTMLImageElement promise
+const _overlayCache  = new Map();   // id → HTMLImageElement|null promise
 
 let _cbDb  = null;
-let _cache = {};   // pageId → { pageId, bg, draw, thumb, name, t }
+let _cache = {};   // pageId → { pageId, bgColor?, draw, thumb, name, t } (or legacy bg dataURL)
 
 function _cbOpen() {
   return new Promise((resolve, reject) => {
@@ -109,7 +110,6 @@ FP.coloringBook = {
     if (_discoverPromise) return _discoverPromise;
     _discoverPromise = (async () => {
       const dir = _coloringDir();
-      let pages = [];
 
       // 1. manifest.json (primary)
       try {
@@ -117,10 +117,11 @@ FP.coloringBook = {
         if (r.ok) {
           const data = await r.json();
           if (data && Array.isArray(data.pages)) {
-            pages = data.pages.map(p => ({
-              id:   p.file,
-              name: p.name || _filenameToName(p.file),
-              url:  dir + p.file,
+            const pages = data.pages.map(p => ({
+              id:         p.file,
+              name:       p.name || _filenameToName(p.file),
+              url:        dir + p.file,
+              overlayUrl: p.overlay ? dir + p.overlay : null,
             }));
             _cachedPages = _prependBlankEntry(pages);
             return _cachedPages;
@@ -137,11 +138,18 @@ FP.coloringBook = {
           if (ct.includes('text/html')) {
             const html = await r.text();
             const files = _parseAutoindex(html);
-            pages = files.map(f => ({
-              id:   f,
-              name: _filenameToName(f),
-              url:  processedDir + f,
-            }));
+            // Pair "<base>_overlay.<ext>" with "<base>.<ext>" if both present.
+            const fileSet = new Set(files);
+            const pageFiles = files.filter(f => !/_overlay\.[^.]+$/i.test(f));
+            const pages = pageFiles.map(f => {
+              const overlayName = _overlayCompanion(f);
+              return {
+                id:         f,
+                name:       _filenameToName(f),
+                url:        processedDir + f,
+                overlayUrl: fileSet.has(overlayName) ? processedDir + overlayName : null,
+              };
+            });
             _cachedPages = _prependBlankEntry(pages);
             return _cachedPages;
           }
@@ -167,6 +175,25 @@ FP.coloringBook = {
       im.src = page.url;
     });
     _imageCache.set(page.id, p);
+    return p;
+  },
+
+  /**
+   * Returns a cached HTMLImageElement for the custom overlay companion file
+   * (`<base>_overlay.<ext>`), or null if the page has no overlay. A 404 also
+   * resolves to null so callers can treat "no overlay" uniformly.
+   */
+  loadOverlay(page) {
+    if (!page.overlayUrl) return Promise.resolve(null);
+    if (_overlayCache.has(page.id)) return _overlayCache.get(page.id);
+    const p = new Promise((resolve) => {
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload  = () => resolve(im);
+      im.onerror = () => resolve(null);   // missing overlay is not an error
+      im.src = page.overlayUrl;
+    });
+    _overlayCache.set(page.id, p);
     return p;
   },
 
@@ -210,6 +237,11 @@ function _prependBlankEntry(pages) {
 function _filenameToName(file) {
   const base = file.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
   return base.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/** "Garden-01.png" → "Garden-01_overlay.png" (matching extension). */
+function _overlayCompanion(file) {
+  return file.replace(/(\.[^.]+)$/, '_overlay$1');
 }
 
 function _parseAutoindex(html) {
