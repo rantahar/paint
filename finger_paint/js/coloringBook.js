@@ -109,6 +109,7 @@ FP.coloringBook = {
     if (_discoverPromise) return _discoverPromise;
     _discoverPromise = (async () => {
       const dir = _coloringDir();
+      let pages = [];
 
       // 1. manifest.json (primary)
       try {
@@ -116,11 +117,12 @@ FP.coloringBook = {
         if (r.ok) {
           const data = await r.json();
           if (data && Array.isArray(data.pages)) {
-            _cachedPages = data.pages.map(p => ({
+            pages = data.pages.map(p => ({
               id:   p.file,
               name: p.name || _filenameToName(p.file),
               url:  dir + p.file,
             }));
+            _cachedPages = _prependBlankEntry(pages);
             return _cachedPages;
           }
         }
@@ -135,17 +137,18 @@ FP.coloringBook = {
           if (ct.includes('text/html')) {
             const html = await r.text();
             const files = _parseAutoindex(html);
-            _cachedPages = files.map(f => ({
+            pages = files.map(f => ({
               id:   f,
               name: _filenameToName(f),
               url:  processedDir + f,
             }));
+            _cachedPages = _prependBlankEntry(pages);
             return _cachedPages;
           }
         }
       } catch (e) { /* fall through */ }
 
-      _cachedPages = [];
+      _cachedPages = _prependBlankEntry([]);
       return _cachedPages;
     })();
     return _discoverPromise;
@@ -190,6 +193,19 @@ FP.coloringBook = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────
+
+const BLANK_PAGE_ID = '__blank-white';
+
+function _prependBlankEntry(pages) {
+  return [
+    {
+      id: BLANK_PAGE_ID,
+      name: 'Blank Canvas',
+      isBlank: true,
+    },
+    ...pages,
+  ];
+}
 
 function _filenameToName(file) {
   const base = file.replace(/^.*\//, '').replace(/\.[^.]+$/, '');

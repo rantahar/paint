@@ -648,19 +648,19 @@
       });
     }
 
-    // Display newest-first at the top (consistent with how the page list is ordered).
-    // We're not matching the saved-strip's bottom-newest order here because
-    // coloring pages don't have a "newest" — they're a stable catalog.
+    // Display pages bottom-to-top (page[0] at bottom, near save button),
+    // matching the saved-drawings strip order.
     const visible = pages.slice(state.coloringScrollOffset,
                                  state.coloringScrollOffset + maxVisible);
     visible.forEach((page, i) => {
-      renderColoringThumb(page, x, rowY(firstThumbRow + i), B);
+      renderColoringThumb(page, x, rowY(lastThumbRow - i), B);
     });
   }
 
   function renderColoringThumb(page, x, y, B) {
-    if (state.coloringConfirmReloadId === page.id) {
+    if (state.coloringConfirmReloadId === page.id && !page.isBlank) {
       // Replace this slot with the reload button (second-tap confirm).
+      // (Don't show reload confirm for the blank canvas)
       makeBtn({
         x, y, size: B, accent: true,
         onTap: () => handleColoringPageReloadConfirm(page),
@@ -676,6 +676,21 @@
       ariaLabel: page.name,
       extraClass: 'thumb',
     });
+
+    // Blank canvas entry — render a white thumbnail
+    if (page.isBlank) {
+      const thumbSize = 160;
+      const c = document.createElement('canvas');
+      c.width = c.height = thumbSize;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, thumbSize, thumbSize);
+      const img = document.createElement('img');
+      img.src = c.toDataURL('image/png');
+      img.alt = '';
+      btn.appendChild(img);
+      return;
+    }
 
     // Prefer the autosaved thumbnail (shows the user's painted state on the
     // page) if present; otherwise generate a smooth canvas-based thumbnail.
@@ -847,17 +862,31 @@
   }
 
   async function handleClearTap() {
-    // If a coloring page is loaded, the user's work is autosaved per-page;
-    // clearing means "leave this page and return to blank paper" — no
-    // confirmation dialog because nothing is lost.
-    if (state.currentColoringPageId) {
-      _leavingColoringPage();
+    // If blank canvas is loaded, just clear the drawing
+    if (state.currentColoringPageId === '__blank-white') {
       await canvasComp.pageFlip(async () => {
-        canvasComp.reset();
-        onCanvasContentChanged();
+        canvasComp.clearDrawing();
       }, PAGE_FLIP_ANIMATION, () => {
         renderAll();
       });
+      FP.playSound('deleteDrawing');
+      return;
+    }
+    // If a coloring page is loaded, reload it with cleared drawings.
+    if (state.currentColoringPageId) {
+      const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
+      if (page) {
+        state.coloringConfirmReloadId = null;
+        FP.coloringBook.removeAutosave(page.id);
+        await canvasComp.pageFlip(async () => {
+          const img = await FP.coloringBook.loadImage(page);
+          canvasComp.setBackgroundImage(img);
+          canvasComp.clearDrawing();
+        }, PAGE_FLIP_ANIMATION, () => {
+          renderAll();
+        });
+        FP.playSound('deleteDrawing');
+      }
       return;
     }
     if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
@@ -1110,6 +1139,24 @@
   }
 
   async function handleColoringPageTap(page) {
+    // Blank canvas entry — load plain white canvas instead
+    if (page.isBlank) {
+      if (state.currentColoringPageId === page.id) {
+        // Already on blank canvas, nothing to do
+        return;
+      }
+      // Coming from a coloring page or drawing: warn on unsaved changes
+      if (state.currentColoringPageId) {
+        autosaveCurrentColoringPage();
+      } else if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
+        const choice = await FP.dialogs.loadWithDirty();
+        if (choice === 'cancel' || choice == null) return;
+        if (choice === 'save') doSave();
+      }
+      await loadBlankCanvas();
+      return;
+    }
+
     // A different slot was tapped → cancel any pending reload-confirm.
     if (state.coloringConfirmReloadId && state.coloringConfirmReloadId !== page.id) {
       state.coloringConfirmReloadId = null;
@@ -1181,8 +1228,29 @@
     });
   }
 
+  async function loadBlankCanvas() {
+    await canvasComp.pageFlip(async () => {
+      canvasComp.fillBackground('#ffffff');
+      canvasComp.clearDrawing();
+      state.currentColoringPageId   = '__blank-white';  // Mark as blank canvas mode
+      state.coloringConfirmReloadId = null;
+      state.loadedDrawingId         = null;
+      state.loadedDrawingEntry      = null;
+      state.savedJustNow            = false;
+      // Clear page dimensions when loading blank canvas
+      canvasComp.setPageDimensions(null, null);
+      enableBtn('save');
+      // Automatically switch to frame view
+      state.frameMode = true;
+    }, PAGE_FLIP_ANIMATION, () => {
+      renderAll();
+    });
+  }
+
   function autosaveCurrentColoringPage() {
     if (!state.currentColoringPageId) return;
+    // Don't autosave the blank canvas — it's transient
+    if (state.currentColoringPageId === '__blank-white') return;
     try {
       const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
       FP.coloringBook.setAutosave(state.currentColoringPageId, {
