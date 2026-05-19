@@ -29,8 +29,9 @@
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
 
-const PAINTING_W   = 1000;     // canonical backing width (painting units)
-const FLIP_HALF_MS = 220;      // page-flip half-duration (must match CSS keyframes)
+const PAINTING_W      = 1000;  // canonical backing width (painting units)
+const FLIP_HALF_MS    = 220;   // page-flip half-duration (must match CSS keyframes)
+const OVERLAY_OPACITY = 0.5;   // semi-transparent outline overlay (when no custom _overlay.png)
 
 FP.PaintingCanvas = class {
   constructor(wrapEl) {
@@ -47,19 +48,40 @@ FP.PaintingCanvas = class {
     this._visibleH  = PAINTING_W;   // visible height in painting units (updated by setRect)
     this._bgImageH  = 0;            // bg image extent in painting units (0 = solid fill)
 
-    // Background canvas (under)
+    // Layer 1: solid color background
     this.bgCanvas = document.createElement('canvas');
     this.bgCanvas.width  = PAINTING_W;
     this.bgCanvas.height = this._paintingH;
+    this.bgCanvas.style.pointerEvents = 'none';
     this.bgCtx = this.bgCanvas.getContext('2d');
     this.paintingEl.appendChild(this.bgCanvas);
 
-    // Drawing canvas (over)
+    // Layer 2: coloring-page outline (opaque, white→transparent)
+    this.outlineCanvas = document.createElement('canvas');
+    this.outlineCanvas.width  = PAINTING_W;
+    this.outlineCanvas.height = this._paintingH;
+    this.outlineCanvas.style.pointerEvents = 'none';
+    this.outlineCtx = this.outlineCanvas.getContext('2d');
+    this.paintingEl.appendChild(this.outlineCanvas);
+
+    // Layer 3: user strokes (only layer that receives pointer events)
     this.drawCanvas = document.createElement('canvas');
     this.drawCanvas.width  = PAINTING_W;
     this.drawCanvas.height = this._paintingH;
     this.drawCtx = this.drawCanvas.getContext('2d');
     this.paintingEl.appendChild(this.drawCanvas);
+
+    // Layer 4: outline overlay (semi-transparent, or custom _overlay.png at full opacity)
+    this.overlayCanvas = document.createElement('canvas');
+    this.overlayCanvas.width  = PAINTING_W;
+    this.overlayCanvas.height = this._paintingH;
+    this.overlayCanvas.style.pointerEvents = 'none';
+    this.overlayCtx = this.overlayCanvas.getContext('2d');
+    this.paintingEl.appendChild(this.overlayCanvas);
+
+    // Cached processed outline bitmaps for re-blitting on resize.
+    this._outlineBitmap = null;       // offscreen canvas, processed (white→transparent) outline
+    this._overlayBitmap = null;       // offscreen canvas, custom overlay (or null → derive from outline)
 
     // Initial white paper
     this._currentBgColor = '#ffffff';
@@ -175,8 +197,10 @@ FP.PaintingCanvas = class {
 
     // Canvas CSS height maintains backing aspect ratio
     const cssH = canvasWidth * this._paintingH / PAINTING_W;
-    this.bgCanvas.style.height   = cssH + 'px';
-    this.drawCanvas.style.height = cssH + 'px';
+    this.bgCanvas.style.height      = cssH + 'px';
+    this.outlineCanvas.style.height = cssH + 'px';
+    this.drawCanvas.style.height    = cssH + 'px';
+    this.overlayCanvas.style.height = cssH + 'px';
 
     // Update grey background fill (visible only when a coloring page is loaded)
     if (hasColoringPage) {
@@ -203,15 +227,68 @@ FP.PaintingCanvas = class {
   setSize(size)   { this.size  = size; }
 
   // ── Background ops ──────────────────────────────────────────
+  /**
+   * Fill the solid-color bg layer. When a coloring page is loaded, this
+   * preserves the outline + overlay layers — only the solid color under
+   * the outline changes.
+   */
   fillBackground(color) {
+    const hasPage = this._pageWidth !== null && this._pageHeight !== null;
     this._currentBgColor = color;
-    this._bgImageH = 0;   // solid fill — no image-based extent
-    this.setPageDimensions(null, null);  // clear page dimensions
+    if (!hasPage) {
+      this._bgImageH = 0;                  // solid fill — no image-based extent
+      this.setPageDimensions(null, null);  // clear page dimensions
+    }
     this._fillBg(color);
     this.wrapEl.style.background = color;
   }
 
-  /** image: HTMLImageElement (already loaded). Fits to PAINTING_W wide; resizes canvas height. */
+  getBgColor() { return this._currentBgColor; }
+
+  /**
+   * Load a coloring page as a four-layer composition:
+   *   • Layer 1 (bgCanvas):      solid bgColor (default white, or `bgColor` arg)
+   *   • Layer 2 (outlineCanvas): processed image (white→transparent)
+   *   • Layer 3 (drawCanvas):    cleared (caller may load strokes after)
+   *   • Layer 4 (overlayCanvas): either custom `overlayImage` at full opacity,
+   *                              or layer 2 redrawn at OVERLAY_OPACITY.
+   *
+   * @param {HTMLImageElement} image  the page outline source (raw or pre-processed)
+   * @param {HTMLImageElement|null} overlayImage optional custom overlay
+   * @param {string} bgColor          initial solid bg color (default white)
+   */
+  setColoringPage(image, overlayImage = null, bgColor = '#ffffff') {
+    const imgH = Math.round(image.naturalHeight / image.naturalWidth * PAINTING_W);
+    this._bgImageH = imgH;
+    this.setPageDimensions(PAINTING_W, imgH);
+    this._resizeCanvas(imgH);
+
+    // Layer 1: solid bg
+    this._currentBgColor = bgColor;
+    this._fillBg(bgColor);
+
+    // Layer 2: outline (cache processed bitmap, then blit)
+    this._outlineBitmap = this._processOutlineImage(image, imgH);
+    this._blitOutline();
+
+    // Layer 4: overlay
+    if (overlayImage) {
+      const ovH = Math.round(overlayImage.naturalHeight / overlayImage.naturalWidth * PAINTING_W);
+      const off = document.createElement('canvas');
+      off.width  = PAINTING_W;
+      off.height = ovH;
+      off.getContext('2d').drawImage(overlayImage, 0, 0, PAINTING_W, ovH);
+      this._overlayBitmap = off;
+    } else {
+      this._overlayBitmap = null;          // null → derive from outline at OVERLAY_OPACITY
+    }
+    this._blitOverlay();
+
+    // Wrap background tracks solid bg (margin reads as a continuation of bg color).
+    this.wrapEl.style.background = bgColor;
+  }
+
+  /** Legacy: bake an image into bgCanvas (used by uploaded-image and saved-drawing flows). */
   setBackgroundImage(image) {
     const imgH = Math.round(image.naturalHeight / image.naturalWidth * PAINTING_W);
     this._bgImageH = imgH;
@@ -227,11 +304,71 @@ FP.PaintingCanvas = class {
     ctx.drawImage(image, 0, 0, PAINTING_W, imgH);
     ctx.restore();
 
+    // Legacy path doesn't use outline/overlay layers — make sure they're clear.
+    this._outlineBitmap = null;
+    this._overlayBitmap = null;
+    this._blitOutline();
+    this._blitOverlay();
+
     try {
       const sampleY = Math.min(imgH - 3, this._paintingH - 1);
       const sample  = ctx.getImageData(2, sampleY, 1, 1).data;
       this.wrapEl.style.background = `rgb(${sample[0]},${sample[1]},${sample[2]})`;
     } catch (_) { /* tainted canvas — skip */ }
+  }
+
+  /**
+   * Process a coloring-page image into a black-on-transparent bitmap.
+   * Algorithm: alpha = (255 - luma) * origAlpha / 255; RGB forced to black.
+   *   • Pure black (luma 0)   → fully opaque (anti-aliased lines stay crisp).
+   *   • Pure white (luma 255) → fully transparent (paper disappears).
+   *   • Grey (luma 160)       → semi-transparent BLACK on bg color (not grey).
+   * Colored line art is flattened to a black mask — colored outlines are an
+   * authoring concern best handled by supplying a custom `<base>_overlay.png`.
+   * Idempotent on already-processed PNGs (build-time output has rgb=0 already).
+   */
+  _processOutlineImage(image, imgH) {
+    const off = document.createElement('canvas');
+    off.width  = PAINTING_W;
+    off.height = imgH;
+    const octx = off.getContext('2d');
+    octx.drawImage(image, 0, 0, PAINTING_W, imgH);
+    try {
+      const id = octx.getImageData(0, 0, PAINTING_W, imgH);
+      const d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        d[i]     = 0;
+        d[i + 1] = 0;
+        d[i + 2] = 0;
+        d[i + 3] = Math.round((255 - luma) * d[i + 3] / 255);
+      }
+      octx.putImageData(id, 0, 0);
+    } catch (_) {
+      // Tainted canvas — leave bitmap unprocessed (will still render as full image).
+    }
+    return off;
+  }
+
+  /** Redraw layer 2 from the cached outline bitmap. */
+  _blitOutline() {
+    this.outlineCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+    if (this._outlineBitmap) {
+      this.outlineCtx.drawImage(this._outlineBitmap, 0, 0);
+    }
+  }
+
+  /** Redraw layer 4: custom overlay at full opacity, or outline at OVERLAY_OPACITY. */
+  _blitOverlay() {
+    this.overlayCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+    if (this._overlayBitmap) {
+      this.overlayCtx.drawImage(this._overlayBitmap, 0, 0);
+    } else if (this._outlineBitmap) {
+      this.overlayCtx.save();
+      this.overlayCtx.globalAlpha = OVERLAY_OPACITY;
+      this.overlayCtx.drawImage(this._outlineBitmap, 0, 0);
+      this.overlayCtx.restore();
+    }
   }
 
   /**
@@ -271,6 +408,12 @@ FP.PaintingCanvas = class {
         this.bgCtx.restore();
       }
 
+      // Saved-drawing entries do not use the outline/overlay layers.
+      this._outlineBitmap = null;
+      this._overlayBitmap = null;
+      this._blitOutline();
+      this._blitOverlay();
+
       // Drawing layer
       this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
       if (drawImg) {
@@ -306,6 +449,11 @@ FP.PaintingCanvas = class {
           this.bgCtx.fillRect(0, scaledH, PAINTING_W, this._paintingH - scaledH);
           this.bgCtx.restore();
         }
+        // Composite load: no separately-layered outline/overlay.
+        this._outlineBitmap = null;
+        this._overlayBitmap = null;
+        this._blitOutline();
+        this._blitOverlay();
         this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
 
         try {
@@ -327,13 +475,34 @@ FP.PaintingCanvas = class {
     this._setDirty(false);
   }
 
-  /** Full reset — bg white + empty drawing. */
+  /** Load a transparent strokes PNG onto the draw layer (used by coloring-page autosave restore). */
+  setDrawingFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      if (!dataUrl) { this.clearDrawing(); resolve(); return; }
+      const im = new Image();
+      im.onload = () => {
+        const h = Math.round(im.naturalHeight / im.naturalWidth * PAINTING_W);
+        this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+        this.drawCtx.drawImage(im, 0, 0, PAINTING_W, h);
+        this._setDirty(false);
+        resolve();
+      };
+      im.onerror = reject;
+      im.src = dataUrl;
+    });
+  }
+
+  /** Full reset — bg white + empty drawing + cleared outline/overlay. */
   reset() {
     this._currentBgColor = '#ffffff';
     this._bgImageH = 0;
     this.setPageDimensions(null, null);  // clear page dimensions
     this._fillBg('#ffffff');
     this.wrapEl.style.background = '#ffffff';
+    this._outlineBitmap = null;
+    this._overlayBitmap = null;
+    this._blitOutline();
+    this._blitOverlay();
     this.clearDrawing();
   }
 
@@ -343,18 +512,38 @@ FP.PaintingCanvas = class {
   }
 
   // ── Output ──────────────────────────────────────────────────
-  /** Background layer only, cropped to content extent. PNG data URL. */
+  /**
+   * Saved-drawings strip uses a flattened "bg" entry — for coloring pages this
+   * is bg + outline so reloading via the legacy path still shows the outline.
+   */
   toBackgroundDataURL() {
     const saveH = this._computeSaveHeight();
     const out = document.createElement('canvas');
     out.width  = PAINTING_W;
     out.height = saveH;
-    out.getContext('2d').drawImage(this.bgCanvas, 0, 0);
+    const ox = out.getContext('2d');
+    ox.drawImage(this.bgCanvas, 0, 0);
+    if (this._outlineBitmap) ox.drawImage(this.outlineCanvas, 0, 0);
     return out.toDataURL('image/png');
   }
 
-  /** Drawing layer only (transparent), cropped to content extent. PNG data URL. */
+  /**
+   * Drawing layer for saved entries. When a coloring page is loaded we also
+   * fold the overlay in here so saved drawings still show the top-most lines.
+   */
   toDrawingDataURL() {
+    const saveH = this._computeSaveHeight();
+    const out = document.createElement('canvas');
+    out.width  = PAINTING_W;
+    out.height = saveH;
+    const ox = out.getContext('2d');
+    ox.drawImage(this.drawCanvas, 0, 0);
+    if (this._overlayBitmap || this._outlineBitmap) ox.drawImage(this.overlayCanvas, 0, 0);
+    return out.toDataURL('image/png');
+  }
+
+  /** Drawing strokes only — for coloring-page autosave (outline rebuilt from pageId). */
+  toStrokesOnlyDataURL() {
     const saveH = this._computeSaveHeight();
     const out = document.createElement('canvas');
     out.width  = PAINTING_W;
@@ -363,15 +552,17 @@ FP.PaintingCanvas = class {
     return out.toDataURL('image/png');
   }
 
-  /** Composite both layers, cropped to content extent. Returns PNG data URL. */
+  /** All four layers flattened, cropped to content extent. */
   toCompositeDataURL() {
     const saveH = this._computeSaveHeight();
     const out = document.createElement('canvas');
     out.width  = PAINTING_W;
     out.height = saveH;
     const ox = out.getContext('2d');
-    ox.drawImage(this.bgCanvas,   0, 0);
-    ox.drawImage(this.drawCanvas, 0, 0);
+    ox.drawImage(this.bgCanvas,      0, 0);
+    ox.drawImage(this.outlineCanvas, 0, 0);
+    ox.drawImage(this.drawCanvas,    0, 0);
+    ox.drawImage(this.overlayCanvas, 0, 0);
     return out.toDataURL('image/png');
   }
 
@@ -412,13 +603,17 @@ FP.PaintingCanvas = class {
       ox.fillStyle = '#ffffff';
       ox.fillRect(0, 0, size, size);
 
-      // Draw the page content centered
-      ox.drawImage(this.bgCanvas,   srcX, srcY, srcW, srcH, destX, destY, destW, destH);
-      ox.drawImage(this.drawCanvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      // Draw the page content centered (all four layers)
+      ox.drawImage(this.bgCanvas,      srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.outlineCanvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.drawCanvas,    srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.overlayCanvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
     } else {
       // Blank canvas: use the standard square capture (zoom-to-fill top-left)
-      ox.drawImage(this.bgCanvas,   0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
-      ox.drawImage(this.drawCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+      ox.drawImage(this.bgCanvas,      0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+      ox.drawImage(this.outlineCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+      ox.drawImage(this.drawCanvas,    0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+      ox.drawImage(this.overlayCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
     }
 
     return out.toDataURL('image/png');
@@ -579,9 +774,11 @@ FP.PaintingCanvas = class {
     snapBg.getContext('2d').drawImage(this.bgCanvas,    0, 0);
     snapDraw.getContext('2d').drawImage(this.drawCanvas, 0, 0);
 
-    this._paintingH        = newH;
-    this.bgCanvas.height   = newH;
-    this.drawCanvas.height = newH;
+    this._paintingH           = newH;
+    this.bgCanvas.height      = newH;
+    this.outlineCanvas.height = newH;
+    this.drawCanvas.height    = newH;
+    this.overlayCanvas.height = newH;
 
     this.bgCtx.drawImage(snapBg,    0, 0);
     this.drawCtx.drawImage(snapDraw, 0, 0);
@@ -591,6 +788,10 @@ FP.PaintingCanvas = class {
     this.bgCtx.fillStyle = this._currentBgColor;
     this.bgCtx.fillRect(0, oldH, PAINTING_W, newH - oldH);
     this.bgCtx.restore();
+
+    // Outline + overlay are derived from cached bitmaps — re-blit cleanly.
+    this._blitOutline();
+    this._blitOverlay();
   }
 
   /**
@@ -605,16 +806,23 @@ FP.PaintingCanvas = class {
       this._expandCanvas(targetH);
     } else {
       // Truncate — browsers preserve top content when canvas.height decreases
-      this._paintingH        = targetH;
-      this.bgCanvas.height   = targetH;
-      this.drawCanvas.height = targetH;
+      this._paintingH           = targetH;
+      this.bgCanvas.height      = targetH;
+      this.outlineCanvas.height = targetH;
+      this.drawCanvas.height    = targetH;
+      this.overlayCanvas.height = targetH;
+      // Outline + overlay are derived — re-blit cleanly.
+      this._blitOutline();
+      this._blitOverlay();
     }
     // Refresh CSS height on the canvas elements
     const cssW = parseFloat(this.bgCanvas.style.width) || this.bgCanvas.offsetWidth;
     if (cssW > 0) {
       const cssH = cssW * this._paintingH / PAINTING_W;
-      this.bgCanvas.style.height   = cssH + 'px';
-      this.drawCanvas.style.height = cssH + 'px';
+      this.bgCanvas.style.height      = cssH + 'px';
+      this.outlineCanvas.style.height = cssH + 'px';
+      this.drawCanvas.style.height    = cssH + 'px';
+      this.overlayCanvas.style.height = cssH + 'px';
     }
   }
 

@@ -835,29 +835,36 @@
   }
 
   function handleBgFillTap() {
-    _leavingColoringPage();
+    const onColoringPage = !!state.currentColoringPageId;
+    // On a coloring page: fill the solid-bg layer (the outline + overlay layers
+    // stay intact, so the page lines are preserved over the new color).
+    // Elsewhere: keep legacy behavior (leave any loaded saved drawing).
+    if (!onColoringPage) _leavingColoringPage();
     const c = state.palette[state.activeColorIdx];
     canvasComp.fillBackground(c);
     // Auto-switch to opposite column color (flip LSB)
     state.activeColorIdx = state.activeColorIdx ^ 1;
     canvasComp.setColor(state.palette[state.activeColorIdx]);
-    onCanvasContentChanged();
+    if (onColoringPage) {
+      autosaveCurrentColoringPage();
+    } else {
+      onCanvasContentChanged();
+    }
     renderAll();
     FP.playSound('bgFill');
   }
 
   async function handleClearTap() {
-    // If a coloring page is loaded, the user's work is autosaved per-page;
-    // clearing means "leave this page and return to blank paper" — no
-    // confirmation dialog because nothing is lost.
+    // On a coloring page: wipe the user's strokes but preserve their chosen
+    // bg color, the outline, and the overlay. Autosaved per-page so nothing
+    // is lost; no confirmation dialog.
     if (state.currentColoringPageId) {
-      _leavingColoringPage();
       await canvasComp.pageFlip(async () => {
-        canvasComp.reset();
-        onCanvasContentChanged();
+        canvasComp.clearDrawing();
       }, PAGE_FLIP_ANIMATION, () => {
         renderAll();
       });
+      autosaveCurrentColoringPage();
       return;
     }
     if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
@@ -1141,8 +1148,11 @@
     state.coloringConfirmReloadId = null;
     FP.coloringBook.removeAutosave(page.id);
     await canvasComp.pageFlip(async () => {
-      const img = await FP.coloringBook.loadImage(page);
-      canvasComp.setBackgroundImage(img);
+      const [img, overlayImg] = await Promise.all([
+        FP.coloringBook.loadImage(page),
+        FP.coloringBook.loadOverlay(page),
+      ]);
+      canvasComp.setColoringPage(img, overlayImg, '#ffffff');
       canvasComp.clearDrawing();
     }, PAGE_FLIP_ANIMATION, () => {
       renderAll();
@@ -1152,15 +1162,25 @@
 
   async function loadColoringPage(page) {
     const autosave = FP.coloringBook.getAutosave(page.id);
-    // Load the page image to get dimensions for aspect-ratio-aware scaling
-    const img = await FP.coloringBook.loadImage(page);
+    // Load the page image (and overlay companion, if present)
+    const [img, overlayImg] = await Promise.all([
+      FP.coloringBook.loadImage(page),
+      FP.coloringBook.loadOverlay(page),
+    ]);
     const imgH = Math.round(img.naturalHeight / img.naturalWidth * 1000);  // PAINTING_W = 1000
 
     await canvasComp.pageFlip(async () => {
-      if (autosave && autosave.bg) {
+      if (autosave && autosave.bgColor) {
+        // New layered format: rebuild outline+overlay from page image, apply saved bg + draw.
+        canvasComp.setColoringPage(img, overlayImg, autosave.bgColor);
+        await canvasComp.setDrawingFromDataUrl(autosave.draw);
+      } else if (autosave && autosave.bg) {
+        // Legacy: bg was flattened (page outline baked into bg). Use loadLayersFromDataUrls
+        // which wipes our new outline/overlay layers and shows the baked composite.
         await canvasComp.loadLayersFromDataUrls(autosave.bg, autosave.draw);
       } else {
-        canvasComp.setBackgroundImage(img);
+        // Fresh load: clean four-layer setup with default white bg.
+        canvasComp.setColoringPage(img, overlayImg, '#ffffff');
         canvasComp.clearDrawing();
       }
       // Set page dimensions for aspect-ratio-aware scaling (even for autosaves)
@@ -1186,10 +1206,10 @@
     try {
       const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
       FP.coloringBook.setAutosave(state.currentColoringPageId, {
-        bg:    canvasComp.toBackgroundDataURL(),
-        draw:  canvasComp.toDrawingDataURL(),
-        thumb: canvasComp.toThumbnailDataURL(),
-        name:  page ? page.name : state.currentColoringPageId,
+        bgColor: canvasComp.getBgColor(),
+        draw:    canvasComp.toStrokesOnlyDataURL(),
+        thumb:   canvasComp.toThumbnailDataURL(),
+        name:    page ? page.name : state.currentColoringPageId,
       });
     } catch (e) {
       // Likely a tainted canvas (cross-origin source) — autosave is a best-effort.
