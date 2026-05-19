@@ -48,12 +48,14 @@ function _coloringDir() {
 }
 
 let _discoverPromise = null;
-let _cachedPages     = [];
+let _cachedBooks     = [];         // { id, name, manifest, pageCount }
+let _cachedPages     = [];         // pages from current book
+let _currentBookId   = null;       // id of the currently selected book
 const _imageCache    = new Map();   // id → HTMLImageElement promise
 const _overlayCache  = new Map();   // id → HTMLImageElement|null promise
 
 let _cbDb  = null;
-let _cache = {};   // pageId → { pageId, bgColor?, draw, thumb, name, t } (or legacy bg dataURL)
+let _cache = {};   // pageId (or bookId:pageId) → { pageId, bgColor?, draw, thumb, name, t }
 
 function _cbOpen() {
   return new Promise((resolve, reject) => {
@@ -101,21 +103,40 @@ FP.coloringBook = {
   },
 
   /**
-   * Discovers available coloring pages. Returns a cached promise on
-   * subsequent calls. The resolved array has shape:
-   *   [ { id, name, url } ]
-   * `id` is stable across sessions (used as the autosave key).
+   * Discovers available coloring pages/books. Returns a cached promise on
+   * subsequent calls. If books are found, loads the first book by default.
+   * For backward compatibility, also handles flat page manifests.
+   * Returns an array of pages from the active book (or all pages if flat manifest).
    */
   discover() {
     if (_discoverPromise) return _discoverPromise;
     _discoverPromise = (async () => {
       const dir = _coloringDir();
 
-      // 1. manifest.json (primary)
+      // 1. manifest.json (primary) — check for books or flat pages
       try {
         const r = await fetch(dir + 'manifest.json', { cache: 'no-cache' });
         if (r.ok) {
           const data = await r.json();
+
+          // New format: books-based manifest
+          if (data && Array.isArray(data.books)) {
+            // Load thumbnail for each book from its manifest
+            _cachedBooks = await Promise.all(data.books.map(async (book) => {
+              try {
+                const bookManifest = await fetch(dir + book.manifest, { cache: 'no-cache' }).then(r => r.json());
+                return { ...book, thumbnail: bookManifest.thumbnail || null };
+              } catch (e) {
+                return { ...book, thumbnail: null };
+              }
+            }));
+            if (_cachedBooks.length > 0) {
+              _currentBookId = _cachedBooks[0].id;
+              return await _loadBook(_currentBookId);
+            }
+          }
+
+          // Old format: flat pages manifest
           if (data && Array.isArray(data.pages)) {
             const pages = data.pages.map(p => ({
               id:         p.file,
@@ -161,6 +182,21 @@ FP.coloringBook = {
     })();
     return _discoverPromise;
   },
+
+  /**
+   * Switch to a different book by ID. Returns promise that resolves
+   * with the pages in that book. Only works if books are available.
+   */
+  async switchBook(bookId) {
+    if (_cachedBooks.length === 0) return _cachedPages;
+    const book = _cachedBooks.find(b => b.id === bookId);
+    if (!book) return _cachedPages;
+    _currentBookId = bookId;
+    return await _loadBook(bookId);
+  },
+
+  getBooks() { return _cachedBooks.slice(); },
+  getCurrentBookId() { return _currentBookId; },
 
   list() { return _cachedPages.slice(); },
 
@@ -220,6 +256,37 @@ FP.coloringBook = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────
+
+/**
+ * Load a book manifest and return its pages.
+ * Caches the result in _cachedPages.
+ */
+async function _loadBook(bookId) {
+  const dir = _coloringDir();
+  const book = _cachedBooks.find(b => b.id === bookId);
+  if (!book) return [];
+
+  try {
+    const r = await fetch(dir + book.manifest, { cache: 'no-cache' });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && Array.isArray(data.pages)) {
+        const pages = data.pages.map(p => ({
+          id:         bookId + ':' + p.file,  // Include book ID in page ID
+          name:       p.name || _filenameToName(p.file),
+          url:        dir + p.file,
+          overlayUrl: p.overlay ? dir + p.overlay : null,
+          bookId:     bookId,
+        }));
+        _cachedPages = _prependBlankEntry(pages);
+        return _cachedPages;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load book manifest:', bookId, e);
+  }
+  return [];
+}
 
 const BLANK_PAGE_ID = '__blank-white';
 
