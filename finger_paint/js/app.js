@@ -134,6 +134,19 @@
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
+    // Handle ?deletealldrawings=true BEFORE opening any IDB connections.
+    // deleteDatabase blocks until all open connections to that DB are closed,
+    // so if we opened storage/coloringBook here first the request would hang
+    // forever and init() would stall mid-await with a blank canvas on screen.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('deletealldrawings') === 'true') {
+      try { await _deleteAllDrawings(); }
+      catch (err) { console.error('Failed to delete databases', err); }
+      // Navigate to the clean URL (strips the param and reloads in one step).
+      location.replace(window.location.pathname);
+      return;
+    }
+
     appRoot = document.getElementById('app');
 
     // Layers (back to front): panel bgs → painting → buttons (buttons sit on top)
@@ -155,15 +168,6 @@
 
     // Open IndexedDB for both storage modules before first render
     await Promise.all([FP.storage.init(), FP.coloringBook.init()]);
-
-    // Handle ?deletealldrawings=true URL parameter
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('deletealldrawings') === 'true') {
-      await _deleteAllDrawings();
-      // Remove the query param and reload
-      window.history.replaceState({}, '', window.location.pathname);
-      return;
-    }
 
     // Load saved drawings
     state.saved = FP.storage.list();
@@ -814,26 +818,22 @@
   }
 
   // ── Delete all drawings ───────────────────────────────────────
-  async function _deleteAllDrawings() {
-    // Delete both regular drawings and coloring book autosaves
-    return Promise.all([
-      new Promise((resolve, reject) => {
-        const req = indexedDB.deleteDatabase('fingerPaint.drawings');
-        req.onsuccess = resolve;
-        req.onerror   = () => reject(req.error);
-      }),
-      new Promise((resolve, reject) => {
-        const req = indexedDB.deleteDatabase('fingerPaint.coloringBook');
-        req.onsuccess = resolve;
-        req.onerror   = () => reject(req.error);
-      }),
-    ]).then(() => {
-      console.log('All drawings and coloring pages cleared');
-      location.reload();
-    }).catch(err => {
-      console.error('Failed to delete databases', err);
-      location.reload();
+  // Names must match storage.js DB_NAME ('fingerPaint.drawings') and
+  // coloringBook.js CB_DB_NAME ('fingerPaint.coloring'). The caller is
+  // responsible for navigating to a clean URL afterwards — we don't
+  // reload here so the param-strip can be atomic via location.replace().
+  function _deleteAllDrawings() {
+    const del = (name) => new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = resolve;
+      req.onerror   = () => reject(req.error);
+      req.onblocked = () => {
+        // Should never happen because init() runs the delete BEFORE opening
+        // either DB, but log loudly if it does so the next dev finds it.
+        console.warn('deleteDatabase blocked: connection still open for ' + name);
+      };
     });
+    return Promise.all([del('fingerPaint.drawings'), del('fingerPaint.coloring')]);
   }
 
   // ── Handlers ──────────────────────────────────────────────────
