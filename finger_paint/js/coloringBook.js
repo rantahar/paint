@@ -117,12 +117,13 @@ FP.coloringBook = {
         if (r.ok) {
           const data = await r.json();
           if (data && Array.isArray(data.pages)) {
-            _cachedPages = data.pages.map(p => ({
-              id:        p.file,
-              name:      p.name || _filenameToName(p.file),
-              url:       dir + p.file,
+            const pages = data.pages.map(p => ({
+              id:         p.file,
+              name:       p.name || _filenameToName(p.file),
+              url:        dir + p.file,
               overlayUrl: p.overlay ? dir + p.overlay : null,
             }));
+            _cachedPages = _prependBlankEntry(pages);
             return _cachedPages;
           }
         }
@@ -140,7 +141,7 @@ FP.coloringBook = {
             // Pair "<base>_overlay.<ext>" with "<base>.<ext>" if both present.
             const fileSet = new Set(files);
             const pageFiles = files.filter(f => !/_overlay\.[^.]+$/i.test(f));
-            _cachedPages = pageFiles.map(f => {
+            const pages = pageFiles.map(f => {
               const overlayName = _overlayCompanion(f);
               return {
                 id:         f,
@@ -149,12 +150,13 @@ FP.coloringBook = {
                 overlayUrl: fileSet.has(overlayName) ? processedDir + overlayName : null,
               };
             });
+            _cachedPages = _prependBlankEntry(pages);
             return _cachedPages;
           }
         }
       } catch (e) { /* fall through */ }
 
-      _cachedPages = [];
+      _cachedPages = _prependBlankEntry([]);
       return _cachedPages;
     })();
     return _discoverPromise;
@@ -218,6 +220,19 @@ FP.coloringBook = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────
+
+const BLANK_PAGE_ID = '__blank-white';
+
+function _prependBlankEntry(pages) {
+  return [
+    {
+      id: BLANK_PAGE_ID,
+      name: 'Blank Canvas',
+      isBlank: true,
+    },
+    ...pages,
+  ];
+}
 
 function _filenameToName(file) {
   const base = file.replace(/^.*\//, '').replace(/\.[^.]+$/, '');

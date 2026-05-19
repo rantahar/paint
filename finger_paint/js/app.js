@@ -156,6 +156,15 @@
     // Open IndexedDB for both storage modules before first render
     await Promise.all([FP.storage.init(), FP.coloringBook.init()]);
 
+    // Handle ?deletealldrawings=true URL parameter
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('deletealldrawings') === 'true') {
+      await _deleteAllDrawings();
+      // Remove the query param and reload
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+
     // Load saved drawings
     state.saved = FP.storage.list();
 
@@ -648,19 +657,19 @@
       });
     }
 
-    // Display newest-first at the top (consistent with how the page list is ordered).
-    // We're not matching the saved-strip's bottom-newest order here because
-    // coloring pages don't have a "newest" — they're a stable catalog.
+    // Display pages bottom-to-top (page[0] at bottom, near save button),
+    // matching the saved-drawings strip order.
     const visible = pages.slice(state.coloringScrollOffset,
                                  state.coloringScrollOffset + maxVisible);
     visible.forEach((page, i) => {
-      renderColoringThumb(page, x, rowY(firstThumbRow + i), B);
+      renderColoringThumb(page, x, rowY(lastThumbRow - i), B);
     });
   }
 
   function renderColoringThumb(page, x, y, B) {
-    if (state.coloringConfirmReloadId === page.id) {
+    if (state.coloringConfirmReloadId === page.id && !page.isBlank) {
       // Replace this slot with the reload button (second-tap confirm).
+      // (Don't show reload confirm for the blank canvas)
       makeBtn({
         x, y, size: B, accent: true,
         onTap: () => handleColoringPageReloadConfirm(page),
@@ -676,6 +685,21 @@
       ariaLabel: page.name,
       extraClass: 'thumb',
     });
+
+    // Blank canvas entry — render a white thumbnail
+    if (page.isBlank) {
+      const thumbSize = 160;
+      const c = document.createElement('canvas');
+      c.width = c.height = thumbSize;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, thumbSize, thumbSize);
+      const img = document.createElement('img');
+      img.src = c.toDataURL('image/png');
+      img.alt = '';
+      btn.appendChild(img);
+      return;
+    }
 
     // Prefer the autosaved thumbnail (shows the user's painted state on the
     // page) if present; otherwise generate a smooth canvas-based thumbnail.
@@ -789,6 +813,29 @@
     return percent;
   }
 
+  // ── Delete all drawings ───────────────────────────────────────
+  async function _deleteAllDrawings() {
+    // Delete both regular drawings and coloring book autosaves
+    return Promise.all([
+      new Promise((resolve, reject) => {
+        const req = indexedDB.deleteDatabase('fingerPaint.drawings');
+        req.onsuccess = resolve;
+        req.onerror   = () => reject(req.error);
+      }),
+      new Promise((resolve, reject) => {
+        const req = indexedDB.deleteDatabase('fingerPaint.coloringBook');
+        req.onsuccess = resolve;
+        req.onerror   = () => reject(req.error);
+      }),
+    ]).then(() => {
+      console.log('All drawings and coloring pages cleared');
+      location.reload();
+    }).catch(err => {
+      console.error('Failed to delete databases', err);
+      location.reload();
+    });
+  }
+
   // ── Handlers ──────────────────────────────────────────────────
   function handleColorTap(idx) {
     state.activeColorIdx = idx;
@@ -855,9 +902,19 @@
   }
 
   async function handleClearTap() {
-    // On a coloring page: wipe the user's strokes but preserve their chosen
-    // bg color, the outline, and the overlay. Autosaved per-page so nothing
-    // is lost; no confirmation dialog.
+    // Blank canvas mode: just clear the drawing.
+    if (state.currentColoringPageId === '__blank-white') {
+      await canvasComp.pageFlip(async () => {
+        canvasComp.clearDrawing();
+      }, PAGE_FLIP_ANIMATION, () => {
+        renderAll();
+      });
+      FP.playSound('deleteDrawing');
+      return;
+    }
+    // On a coloring page: wipe strokes but preserve the chosen bg color,
+    // outline, and overlay. Hard-reset (drop bg color too) is still reachable
+    // via double-tap on the thumbnail → handleColoringPageReloadConfirm.
     if (state.currentColoringPageId) {
       await canvasComp.pageFlip(async () => {
         canvasComp.clearDrawing();
@@ -1117,6 +1174,24 @@
   }
 
   async function handleColoringPageTap(page) {
+    // Blank canvas entry — load plain white canvas instead
+    if (page.isBlank) {
+      if (state.currentColoringPageId === page.id) {
+        // Already on blank canvas, nothing to do
+        return;
+      }
+      // Coming from a coloring page or drawing: warn on unsaved changes
+      if (state.currentColoringPageId) {
+        autosaveCurrentColoringPage();
+      } else if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
+        const choice = await FP.dialogs.loadWithDirty();
+        if (choice === 'cancel' || choice == null) return;
+        if (choice === 'save') doSave();
+      }
+      await loadBlankCanvas();
+      return;
+    }
+
     // A different slot was tapped → cancel any pending reload-confirm.
     if (state.coloringConfirmReloadId && state.coloringConfirmReloadId !== page.id) {
       state.coloringConfirmReloadId = null;
@@ -1201,8 +1276,30 @@
     });
   }
 
+  async function loadBlankCanvas() {
+    await canvasComp.pageFlip(async () => {
+      // reset() clears all four layers (bg → white, outline + overlay wiped,
+      // strokes wiped) and clears page dimensions in one call. We need the
+      // full four-layer cleanup here because the user may be transitioning
+      // *from* a coloring page whose outline/overlay would otherwise leak.
+      canvasComp.reset();
+      state.currentColoringPageId   = '__blank-white';  // Mark as blank canvas mode
+      state.coloringConfirmReloadId = null;
+      state.loadedDrawingId         = null;
+      state.loadedDrawingEntry      = null;
+      state.savedJustNow            = false;
+      enableBtn('save');
+      // Automatically switch to frame view
+      state.frameMode = true;
+    }, PAGE_FLIP_ANIMATION, () => {
+      renderAll();
+    });
+  }
+
   function autosaveCurrentColoringPage() {
     if (!state.currentColoringPageId) return;
+    // Don't autosave the blank canvas — it's transient
+    if (state.currentColoringPageId === '__blank-white') return;
     try {
       const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
       FP.coloringBook.setAutosave(state.currentColoringPageId, {
