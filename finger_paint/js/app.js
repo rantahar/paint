@@ -58,6 +58,8 @@
     // Coloring-book state
     coloringBookOpen:        false,           // strip rendered in place of save bar
     currentColoringPageId:   null,            // page currently loaded on canvas (if any)
+    currentBookId:           null,            // currently selected book (if books exist)
+    coloringBooks:           [],              // discovered books (from coloringBook.getBooks())
     coloringScrollOffset:    0,
     coloringConfirmReloadId: null,            // page whose slot is showing "reload" confirm
     coloringPages:           [],              // discovered pages (from coloringBook.discover())
@@ -178,6 +180,8 @@
     // (autosaves whose source PNG is no longer in coloring-pages/).
     FP.coloringBook.discover().then(pages => {
       state.coloringPages = pages;
+      state.coloringBooks = FP.coloringBook.getBooks();
+      state.currentBookId = FP.coloringBook.getCurrentBookId();
       migrateOrphanedColoringAutosaves(pages);
       renderAll();
     }).catch(err => console.warn('coloringBook discover failed', err));
@@ -587,6 +591,11 @@
     const totalSlots = Math.max(0, n - 2);
     const pages = state.coloringPages;
 
+    // Render book selector if books are available
+    if (state.coloringBooks.length > 0) {
+      _renderBookSelector(layout, 'landscape');
+    }
+
     let maxVisible, firstThumbCol, hasOverflow;
     if (pages.length <= totalSlots) {
       hasOverflow   = false;
@@ -633,6 +642,11 @@
     const totalSlots = Math.max(0, n - 2);
     const pages = state.coloringPages;
 
+    // Render book selector if books are available
+    if (state.coloringBooks.length > 0) {
+      _renderBookSelector(layout, 'portrait');
+    }
+
     let maxVisible, firstThumbRow, lastThumbRow, hasOverflow;
     if (pages.length <= totalSlots) {
       hasOverflow   = false;
@@ -668,6 +682,124 @@
     visible.forEach((page, i) => {
       renderColoringThumb(page, x, rowY(lastThumbRow - i), B);
     });
+  }
+
+  function _renderBookSelector(layout, orientation) {
+    const G = layout.G;
+    const B = layout.B;
+    const books = state.coloringBooks;
+    const thumbSize = Math.floor(B * 0.8);
+
+    if (orientation === 'landscape') {
+      // Horizontal pill buttons above the page strip
+      const y = layout.bottomRow.y - B - G;  // Above the bottom row
+      let x = G;
+
+      books.forEach((book) => {
+        const isActive = state.currentBookId === book.id;
+
+        // Create canvas for book thumbnail
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = thumbSize;
+        canvas.style.cssText = `position:absolute;left:${x}px;top:${y}px;cursor:pointer;border:${isActive ? '3px solid #4CAF50' : '1px solid #ccc'};border-radius:4px;pointer-events:auto;z-index:100;`;
+        canvas.setAttribute('aria-label', book.name);
+        canvas.title = book.name;
+        canvas.addEventListener('click', () => handleColoringBookSwitch(book.id));
+        buttonLayer.appendChild(canvas);
+
+        const ctx = canvas.getContext('2d');
+
+        // Try to load and display thumbnail if available
+        if (book.thumbnail) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, thumbSize, thumbSize);
+            if (isActive) {
+              ctx.strokeStyle = '#4CAF50';
+              ctx.lineWidth = 3;
+              ctx.strokeRect(0, 0, thumbSize, thumbSize);
+            }
+          };
+          img.onerror = () => {
+            // Fallback if thumbnail fails to load
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, thumbSize, thumbSize);
+            ctx.fillStyle = '#333333';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
+          };
+          img.src = _coloringDir() + book.thumbnail;
+        } else {
+          // Text label for books without thumbnail
+          ctx.fillStyle = '#f0f0f0';
+          ctx.fillRect(0, 0, thumbSize, thumbSize);
+          ctx.fillStyle = '#333333';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
+        }
+
+        x += thumbSize + G;
+      });
+    } else {
+      // Vertical pill buttons for portrait, positioned on right side above the page list
+      const x = layout.rightCol?.x ?? (window.innerWidth - thumbSize - layout.G);
+      const topY = layout.G;  // Start near the top, above the page list
+      let y = topY;
+
+      books.forEach((book) => {
+        const isActive = state.currentBookId === book.id;
+
+        // Create canvas for book thumbnail
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = thumbSize;
+        canvas.style.cssText = `position:absolute;left:${x}px;top:${y}px;cursor:pointer;border:${isActive ? '3px solid #4CAF50' : '1px solid #ccc'};border-radius:4px;pointer-events:auto;z-index:100;`;
+        canvas.setAttribute('aria-label', book.name);
+        canvas.title = book.name;
+        canvas.addEventListener('click', () => handleColoringBookSwitch(book.id));
+        buttonLayer.appendChild(canvas);
+
+        const ctx = canvas.getContext('2d');
+
+        // Try to load and display thumbnail if available
+        if (book.thumbnail) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, thumbSize, thumbSize);
+            if (isActive) {
+              ctx.strokeStyle = '#4CAF50';
+              ctx.lineWidth = 3;
+              ctx.strokeRect(0, 0, thumbSize, thumbSize);
+            }
+          };
+          img.onerror = () => {
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, thumbSize, thumbSize);
+            ctx.fillStyle = '#333333';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
+          };
+          img.src = _coloringDir() + book.thumbnail;
+        } else {
+          ctx.fillStyle = '#f0f0f0';
+          ctx.fillRect(0, 0, thumbSize, thumbSize);
+          ctx.fillStyle = '#333333';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
+        }
+
+        y += thumbSize + layout.G;
+      });
+    }
   }
 
   function renderColoringThumb(page, x, y, B) {
@@ -1170,6 +1302,15 @@
         Math.max(0, state.coloringPages.length - 1)));
     }
     FP.playSound('dialogOpen');
+    renderAll();
+  }
+
+  async function handleColoringBookSwitch(bookId) {
+    const pages = await FP.coloringBook.switchBook(bookId);
+    state.currentBookId = bookId;
+    state.coloringPages = pages;
+    state.coloringScrollOffset = 0;  // Reset scroll to top when switching books
+    state.coloringConfirmReloadId = null;
     renderAll();
   }
 
