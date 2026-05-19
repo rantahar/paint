@@ -156,6 +156,15 @@
     // Open IndexedDB for both storage modules before first render
     await Promise.all([FP.storage.init(), FP.coloringBook.init()]);
 
+    // Handle ?deletealldrawings=true URL parameter
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('deletealldrawings') === 'true') {
+      await _deleteAllDrawings();
+      // Remove the query param and reload
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+
     // Load saved drawings
     state.saved = FP.storage.list();
 
@@ -787,6 +796,29 @@
     // Cap so the dot doesn't overflow the button visually.
     percent = Math.max(6, Math.min(95, percent));
     return percent;
+  }
+
+  // ── Delete all drawings ───────────────────────────────────────
+  async function _deleteAllDrawings() {
+    // Delete both regular drawings and coloring book autosaves
+    return Promise.all([
+      new Promise((resolve, reject) => {
+        const req = indexedDB.deleteDatabase('fingerPaint.drawings');
+        req.onsuccess = resolve;
+        req.onerror   = () => reject(req.error);
+      }),
+      new Promise((resolve, reject) => {
+        const req = indexedDB.deleteDatabase('fingerPaint.coloringBook');
+        req.onsuccess = resolve;
+        req.onerror   = () => reject(req.error);
+      }),
+    ]).then(() => {
+      console.log('All drawings and coloring pages cleared');
+      location.reload();
+    }).catch(err => {
+      console.error('Failed to delete databases', err);
+      location.reload();
+    });
   }
 
   // ── Handlers ──────────────────────────────────────────────────
