@@ -46,7 +46,6 @@
     activeBrushId:  CFG.activeBrushId || 'marker',
     sizeIdx:        DEFAULT_SIZE_IDX,
     saved:          [],                       // from storage, most-recent first
-    scrollOffset:   0,                        // index of first visible thumbnail
     loadedDrawingId: null,                    // currently loaded saved drawing (id) — flipped to null on any change
     loadedDrawingEntry: null,                 // the full saved-drawing entry (bg/draw/thumb) — used to recompose for download
     savedJustNow:   false,                    // toggled true after Save; false on any change
@@ -55,14 +54,14 @@
     disabledButtons: new Set(),               // button IDs to disable (e.g., 'upload', 'download' in fullscreen)
     pointerDownOnButton: new Set(),           // tracks pointerIds that had pointerdown on buttons (for tap-drag to canvas)
 
-    // Coloring-book state
-    coloringBookOpen:        false,           // strip rendered in place of save bar
+    // Bookshelf / coloring-book state
+    coloringBookOpen:        false,           // true when the bookshelf overlay is open
     currentColoringPageId:   null,            // page currently loaded on canvas (if any)
-    currentBookId:           null,            // currently selected book (if books exist)
-    coloringBooks:           [],              // discovered books (from coloringBook.getBooks())
-    coloringScrollOffset:    0,
-    coloringConfirmReloadId: null,            // page whose slot is showing "reload" confirm
-    coloringPages:           [],              // discovered pages (from coloringBook.discover())
+    currentBookId:           null,            // currently selected book (defaults to '__saved')
+    coloringBooks:           [],              // discovered books (from FP.coloringBook.getBooks())
+    coloringScrollOffset:    0,               // bookshelf overlay scroll position (in items)
+    coloringConfirmReloadId: null,            // page whose tile shows the reload-confirm (Stage 4 will remove this)
+    coloringPages:           [],              // pages of the currently-opened book (used by Stage 3's picker)
   };
 
   // Expose state so canvas.js (and any other FP module) can read pointerDownOnButton
@@ -176,13 +175,33 @@
 
     if (CFG.toolOrder) FP.toolOrder = CFG.toolOrder;
 
-    // Discover coloring pages and migrate any orphaned autosaves
-    // (autosaves whose source PNG is no longer in coloring-pages/).
-    FP.coloringBook.discover().then(pages => {
+    // Wire the page picker into our app. The picker owns its own DOM and
+    // state (open/closed, current book, grid-page offset, preview color); we
+    // provide hooks for the actions it can't perform itself (loading pages,
+    // deleting saved drawings, knowing which page is currently loaded).
+    FP.pagePicker.init({
+      onClose: () => renderAll(),
+      onTileTap: handlePickerTileTap,
+      onDeleteSavedTile: handlePickerDeleteSavedTile,
+      getCurrentLoadedId: () => {
+        if (state.loadedDrawingId) return 'saved:' + state.loadedDrawingId;
+        return state.currentColoringPageId;
+      },
+    });
+
+    // Discover coloring books (always includes the synthetic saved book at
+    // the front) and migrate any orphaned autosaves — autosaves whose source
+    // page is no longer in any coloring book's manifest.
+    FP.coloringBook.discover().then(async pages => {
       state.coloringPages = pages;
       state.coloringBooks = FP.coloringBook.getBooks();
       state.currentBookId = FP.coloringBook.getCurrentBookId();
-      migrateOrphanedColoringAutosaves(pages);
+      try {
+        const allColoringPageIds = await FP.coloringBook.getAllPageIds();
+        migrateOrphanedColoringAutosaves(allColoringPageIds);
+      } catch (e) {
+        console.warn('orphan-autosave migration skipped', e);
+      }
       renderAll();
     }).catch(err => console.warn('coloringBook discover failed', err));
 
@@ -195,6 +214,37 @@
     const _clearPointerDown = (e) => state.pointerDownOnButton.delete(e.pointerId);
     window.addEventListener('pointerup',     _clearPointerDown);
     window.addEventListener('pointercancel', _clearPointerDown);
+
+    // Auto-collapse the bookshelf on any pointerdown outside its row's
+    // bounding rect. Includes gaps between tiles, so tapping in the gaps
+    // does NOT collapse. The close itself is deferred to the next frame
+    // (via rAF) — this lets the original event's bubble phase reach the
+    // tapped target FIRST. That matters for buttons like Clear that have
+    // their own onTap which toggles the bookshelf state: if we close
+    // synchronously, Clear's toggle would flip it back to open. Deferring
+    // means Clear's handler closes via its own code path; our rAF callback
+    // then becomes a no-op (state already closed).
+    document.addEventListener('pointerdown', (e) => {
+      if (!state.coloringBookOpen) return;
+      // While the picker is open, the bookshelf stays open regardless of
+      // where the user taps — the picker handles its own dismissal (tap
+      // backdrop = close picker; bookshelf doesn't collapse).
+      if (FP.pagePicker.isOpen()) return;
+      if (!lastLayout || !lastLayout.bookshelfRowRect) return;
+      const r = lastLayout.bookshelfRowRect;
+      const x = e.clientX;
+      const y = e.clientY;
+      const inside =
+        x >= r.left && x <= r.left + r.width &&
+        y >= r.top  && y <= r.top  + r.height;
+      if (!inside) {
+        requestAnimationFrame(() => {
+          if (!state.coloringBookOpen) return;  // already closed by a bubble-phase handler
+          state.coloringBookOpen = false;
+          renderAll();
+        });
+      }
+    }, true);
 
     // Resize handler (debounced via rAF)
     let raf = null;
@@ -305,41 +355,34 @@
     const layout = FP.computeLayout(w, h, state.saved.length);
     lastLayout = layout;
 
-    // Reposition canvas based on frame mode
-    let canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
-
-    // In Crayon mode, use full window in one axis (applies to all content: coloring pages, blank, etc)
-    // Landscape: full height, constrained width. Portrait: full width, constrained height
-    if (CFG.clearOnly && state.frameMode) {
-      if (layout.orientation === 'landscape') {
-        canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: layout.canvas.width, height: h };
-      } else {
-        canvasRect = { left: layout.canvas.left, top: layout.canvas.top, width: w, height: layout.canvas.height };
-      }
-    }
-
+    // Canvas rect: framed view uses layout.canvas (which now extends through
+    // the empty strip-line middle in both modes — no more Crayon-specific
+    // override needed). Full view fills the window.
+    const canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
     canvasComp.setRect(canvasRect, state.frameMode);
 
     // Clear layers
     panelLayer.innerHTML  = '';
     buttonLayer.innerHTML = '';
 
-    // In Crayon mode, never show the toolbar panel backgrounds
+    // In Crayon mode, never show the toolbar panel backgrounds (buttons float
+    // over the canvas, matching the kid-safe minimal aesthetic).
     if (state.frameMode && !CFG.clearOnly) {
       renderPanels(layout);
     }
     renderColorSwatches(layout);
     renderTools(layout);
-    if (layout.orientation === 'landscape') renderBottomRow(layout);
-    else                                    renderRightCol(layout);
+    renderStrip(layout);
+
+    // Page-picker overlay (modal grid + backdrop). Owns its own DOM under
+    // a child of #app; appended LAST so its z-index ordering sits below the
+    // regular .btn z-index (the color palette and corner buttons stay
+    // clickable above the picker's shadow).
+    FP.pagePicker.render(appRoot, layout, state.coloringPages);
   }
 
   function renderPanels(layout) {
-    layout.panels.forEach((p, idx) => {
-      // In Crayon mode, always skip the save bar panel background (last panel in layout.panels)
-      // This applies to all content types (coloring pages, regular backgrounds, blank canvas)
-      if (CFG.clearOnly && idx === layout.panels.length - 1) return;
-
+    layout.panels.forEach((p) => {
       const el = document.createElement('div');
       el.className = 'panel-bg';
       if (p.borders) {
@@ -359,6 +402,24 @@
   }
 
   function renderColorSwatches(layout) {
+    // When the page picker is open, the color palette becomes the BG-COLOR
+    // picker for pages: each swatch slot renders a "fan of 3 papers" icon
+    // in that swatch's color over a neutral (canvas-bg) button. No active
+    // indicator (no border, no checkmark) — selection is shown by the
+    // tinting that gets applied to picker tiles (Stage 4).
+    if (FP.pagePicker.isOpen()) {
+      layout.colors.forEach(s => {
+        const color = state.palette[s.idx];
+        makeBtn({
+          x: s.x, y: s.y, size: layout.B,
+          bg: '#f5f3ee',              // matches #app background
+          onTap: () => handleBgColorPickerTap(s.idx),
+          innerHTML: FP.pageFanIcon(color, layout.B * 0.7),
+          ariaLabel: `Page background color ${s.idx + 1}`,
+        });
+      });
+      return;
+    }
     layout.colors.forEach(s => {
       const color = state.palette[s.idx];
       const isActive = s.idx === state.activeColorIdx;
@@ -375,7 +436,25 @@
     });
   }
 
+  // Picker-only handler: tapping a bg-color icon stores the preview color
+  // on the picker. Stage 4 will composite this as Layer 2 on each tile and
+  // pass it as a bgColorOverride when a tile is tapped to load a page. For
+  // Stage 3 we just store it and re-render; the visual effect lands later.
+  function handleBgColorPickerTap(idx) {
+    FP.pagePicker.setPreviewBgColor(state.palette[idx]);
+    FP.playSound('colorPick', state.palette[idx]);
+    renderAll();
+  }
+
   function renderTools(layout) {
+    // While the page picker is open, the drawing-tools column is replaced
+    // with contextual chrome: prev grid-page, current/total indicator, next
+    // grid-page. None of the regular tools are reachable — keeps the user
+    // focused on picking a page and prevents stray taps from changing brush.
+    if (FP.pagePicker.isOpen()) {
+      _renderPickerChrome(layout);
+      return;
+    }
     layout.tools.forEach(t => {
       let inner = '', accent = false, indicator = false, active = false;
       if (t.kind === 'brush') {
@@ -408,404 +487,227 @@
     });
   }
 
-  function renderBottomRow(layout) {
-    const r = layout.bottomRow;
+  // ── Strip line (Save / Bookshelf-toggle / Clear corners + bookshelf overlay) ─
+
+  // Renders the corner buttons (Save, Bookshelf-toggle, Clear) at the
+  // strip-line slots, plus the bookshelf overlay when open. The middle of
+  // the strip line is otherwise empty — the canvas extends through it.
+  function renderStrip(layout) {
     const B = layout.B;
-    const bookToggleVisible = _bookToggleVisible();
+    const isCrayon = !!CFG.clearOnly;
+    const open = state.coloringBookOpen;
 
-    if (state.coloringBookOpen) {
-      // Strip mode: book toggle at col 0, coloring strip across the middle,
-      // clear at the rightmost col. Save/upload/regular thumbs hidden.
-      _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: true });
-      _renderColoringStripLandscape(layout);
-    } else if (!CFG.clearOnly) {
-      // Upload (col 0) — or book toggle if fullscreen
-      if (bookToggleVisible) {
-        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
-      } else {
-        makeBtn({
-          x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-          onTap: handleUploadTap,
-          innerHTML: FP.icon('upload', B * 0.44),
-          ariaLabel: 'Upload background',
-          disabled: state.disabledButtons.has('upload'),
-        });
-      }
+    const pickerOpen = FP.pagePicker.isOpen();
 
-      // Save / Download-All (col 1)
-      // In fullscreen: always show save, disable when already saved (no re-saving, no download)
+    // Slot 0: Save (skipped in Crayon — slot stays empty). When the picker
+    // is open, Save drops behind the backdrop (visually darkened) per the
+    // redesign — the bookshelf is the active surface.
+    if (!isCrayon) {
       const showDl = state.savedJustNow && !state.isFullscreen;
       makeBtn({
-        x: r.saveXY.x, y: r.saveXY.y, size: B,
+        x: layout.saveXY.x, y: layout.saveXY.y, size: B,
         accent: true,
         onTap: handleSaveOrDownloadAll,
         innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
         ariaLabel: showDl ? 'Download all' : 'Save drawing',
         disabled: state.disabledButtons.has('save'),
+        extraClass: pickerOpen ? 'picker-below' : null,
       });
-
-      // Scroll arrows (if overflow)
-      if (r.hasOverflow) {
-        makeBtn({
-          x: r.scrollLeftXY.x, y: r.scrollLeftXY.y, size: B,
-          onTap: () => scrollSaved(-1),
-          innerHTML: FP.icon('scrollLeft', B * 0.44),
-          ariaLabel: 'Scroll left',
-        });
-        makeBtn({
-          x: r.scrollRightXY.x, y: r.scrollRightXY.y, size: B,
-          onTap: () => scrollSaved(+1),
-          innerHTML: FP.icon('scrollRight', B * 0.44),
-          ariaLabel: 'Scroll right',
-        });
-      }
-
-      // Thumbnails
-      const visibleSaved = state.saved.slice(state.scrollOffset,
-                                              state.scrollOffset + r.maxVisible);
-      visibleSaved.forEach((entry, i) => {
-        const x = r.thumbXs[i];
-        if (x == null) return;
-        renderThumb(entry, x, r.uploadXY.y, B);
-      });
-    } else {
-      // clearOnly (crayon mode), strip closed: just the book toggle.
-      if (bookToggleVisible) {
-        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
-      }
     }
 
-    // Clear (rightmost)
+    // Slot 1: Bookshelf-toggle (always rendered — there's always at least the
+    // synthetic saved book to navigate to). Stays above the picker backdrop
+    // (no .active outline when picker open — the user already sees the
+    // picker; an extra outline on the toggle is visual noise).
     makeBtn({
-      x: r.clearXY.x, y: r.clearXY.y, size: B,
-      accent: true,
-      onTap: handleClearTap,
-      innerHTML: FP.icon('clear', B * 0.44),
-      ariaLabel: 'Clear drawing',
-    });
-  }
-
-  function renderRightCol(layout) {
-    const r = layout.rightCol;
-    const B = layout.B;
-    const bookToggleVisible = _bookToggleVisible();
-
-    // Clear (top)
-    makeBtn({
-      x: r.clearXY.x, y: r.clearXY.y, size: B,
-      accent: true,
-      onTap: handleClearTap,
-      innerHTML: FP.icon('clear', B * 0.44),
-      ariaLabel: 'Clear drawing',
-    });
-
-    if (state.coloringBookOpen) {
-      _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: true });
-      _renderColoringStripPortrait(layout);
-    } else if (!CFG.clearOnly) {
-      // Save / Download-All
-      const showDl = state.savedJustNow && !state.isFullscreen;
-      makeBtn({
-        x: r.saveXY.x, y: r.saveXY.y, size: B,
-        accent: true,
-        onTap: handleSaveOrDownloadAll,
-        innerHTML: FP.icon(showDl ? 'download' : 'save', B * 0.44),
-        ariaLabel: showDl ? 'Download all' : 'Save drawing',
-        disabled: state.disabledButtons.has('save'),
-      });
-
-      // Upload (bottom) — or book toggle if fullscreen
-      if (bookToggleVisible) {
-        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
-      } else {
-        makeBtn({
-          x: r.uploadXY.x, y: r.uploadXY.y, size: B,
-          onTap: handleUploadTap,
-          innerHTML: FP.icon('upload', B * 0.44),
-          ariaLabel: 'Upload background',
-          disabled: state.disabledButtons.has('upload'),
-        });
-      }
-
-      // Scroll arrows — up (near Clear) shows older; down (near Save) shows newer
-      if (r.hasOverflow) {
-        makeBtn({
-          x: r.scrollUpXY.x, y: r.scrollUpXY.y, size: B,
-          onTap: () => scrollSaved(+1),
-          innerHTML: FP.icon('scrollUp', B * 0.44),
-          ariaLabel: 'Scroll up',
-        });
-        makeBtn({
-          x: r.scrollDownXY.x, y: r.scrollDownXY.y, size: B,
-          onTap: () => scrollSaved(-1),
-          innerHTML: FP.icon('scrollDown', B * 0.44),
-          ariaLabel: 'Scroll down',
-        });
-      }
-
-      // Thumbnails — thumb[0] is most-recent at the BOTTOM of strip
-      const visibleSaved = state.saved.slice(state.scrollOffset,
-                                              state.scrollOffset + r.maxVisible);
-      visibleSaved.forEach((entry, i) => {
-        const y = r.thumbYs[i];
-        if (y == null) return;
-        renderThumb(entry, r.uploadXY.x, y, B);
-      });
-    } else {
-      // clearOnly (crayon mode), strip closed: just the book toggle.
-      if (bookToggleVisible) {
-        _renderBookToggle({ x: r.uploadXY.x, y: r.uploadXY.y, size: B, active: false });
-      }
-    }
-  }
-
-  function _bookToggleVisible() {
-    // Visible whenever there are pages to choose from AND:
-    //   • crayon mode (always)
-    //   • fullscreen (replaces upload, which is disabled there)
-    //   • the strip is currently open
-    if (state.coloringBookOpen) return state.coloringPages.length > 0;
-    if (state.coloringPages.length === 0) return false;
-    return CFG.clearOnly || state.isFullscreen;
-  }
-
-  function _renderBookToggle({ x, y, size, active }) {
-    makeBtn({
-      x, y, size,
-      active,
+      x: layout.bookToggleXY.x, y: layout.bookToggleXY.y, size: B,
+      active: open && !pickerOpen,
       onTap: handleColoringBookToggleTap,
-      innerHTML: FP.icon('book', size * 0.44),
-      ariaLabel: active ? 'Close coloring book' : 'Open coloring book',
+      innerHTML: FP.icon('book', B * 0.44),
+      ariaLabel: open ? 'Close bookshelf' : 'Open bookshelf',
     });
+
+    // Slot 2..n-1: bookshelf items (when open) or empty.
+    // Returns the highest slot the overlay drew into so we know whether to
+    // render Clear in slot n-1 or let an overlay item occlude it.
+    let highestSlotUsed = 1;
+    if (open) {
+      highestSlotUsed = _renderBookshelfOverlay(layout);
+    }
+
+    // Slot n-1: Clear. When bookshelf is open and an overlay item reaches
+    // slot n-1, Clear is occluded (and tapping that slot does the overlay
+    // item's action, not clear). When the overlay is shorter than the
+    // available slots, Clear is rendered but `inactive` — looks dimmed but
+    // still consumes the tap and closes the bookshelf (so the tap doesn't
+    // pass through to the canvas and start a stroke).
+    const lastSlot = layout.bookshelfSlotCount - 1;
+    if (!open || highestSlotUsed < lastSlot) {
+      makeBtn({
+        x: layout.clearXY.x, y: layout.clearXY.y, size: B,
+        accent: true,
+        onTap: open ? handleColoringBookToggleTap : handleClearTap,
+        innerHTML: FP.icon('clear', B * 0.44),
+        ariaLabel: open ? 'Close bookshelf' : 'Clear drawing',
+        inactive: open,
+      });
+    }
+
+    // Record the actual occupied range of the strip line so the auto-collapse
+    // listener treats only THAT as "inside" the bookshelf. The rect extends
+    // from slot 0 (Save) to whichever slot the bookshelf overlay last drew
+    // into — Clear is NOT included, so tapping Clear (or any space between
+    // the last book and Clear) is "outside" and closes the bookshelf.
+    // Clear's onTap also closes the bookshelf, so it's covered either way.
+    layout.bookshelfRowRect = _computeBookshelfRowRect(layout, highestSlotUsed);
   }
 
-  /**
-   * Coloring strip layout for landscape: cols 1..numCols-2 inclusive.
-   * Total slots = numCols - 2. With overflow we reserve cols 1 and
-   * numCols-2 for scroll arrows; thumbs occupy cols 2..numCols-3.
-   */
-  function _renderColoringStripLandscape(layout) {
-    const G = layout.G, B = layout.B, n = layout.numCols;
-    const colX = (c) => G + c * (B + G);
-    const y = layout.bottomRow.y;
-    const totalSlots = Math.max(0, n - 2);
-    const pages = state.coloringPages;
-
-    // Render book selector if books are available
-    if (state.coloringBooks.length > 0) {
-      _renderBookSelector(layout, 'landscape');
-    }
-
-    let maxVisible, firstThumbCol, hasOverflow;
-    if (pages.length <= totalSlots) {
-      hasOverflow   = false;
-      maxVisible    = totalSlots;
-      firstThumbCol = 1;
-    } else {
-      hasOverflow   = true;
-      maxVisible    = Math.max(0, totalSlots - 2);
-      firstThumbCol = 2;
-    }
-
-    if (hasOverflow) {
-      makeBtn({
-        x: colX(1), y, size: B,
-        onTap: () => scrollColoring(-1),
-        innerHTML: FP.icon('scrollLeft', B * 0.44),
-        ariaLabel: 'Scroll coloring pages left',
-      });
-      makeBtn({
-        x: colX(n - 2), y, size: B,
-        onTap: () => scrollColoring(+1),
-        innerHTML: FP.icon('scrollRight', B * 0.44),
-        ariaLabel: 'Scroll coloring pages right',
-      });
-    }
-
-    const visible = pages.slice(state.coloringScrollOffset,
-                                 state.coloringScrollOffset + maxVisible);
-    visible.forEach((page, i) => {
-      renderColoringThumb(page, colX(firstThumbCol + i), y, B);
-    });
-  }
-
-  /**
-   * Coloring strip for portrait: rows 1..numRows-2 inclusive.
-   * Total slots = numRows - 2. With overflow we reserve rows 1 and
-   * numRows-2 for scroll arrows; thumbs in rows 2..numRows-3.
-   * thumb[0] is most-recent at the BOTTOM (matching saved-strip ordering).
-   */
-  function _renderColoringStripPortrait(layout) {
-    const G = layout.G, B = layout.B, n = layout.numRows;
-    const rowY = (r) => G + r * (B + G);
-    const x = layout.rightCol.x;
-    const totalSlots = Math.max(0, n - 2);
-    const pages = state.coloringPages;
-
-    // Render book selector if books are available
-    if (state.coloringBooks.length > 0) {
-      _renderBookSelector(layout, 'portrait');
-    }
-
-    let maxVisible, firstThumbRow, lastThumbRow, hasOverflow;
-    if (pages.length <= totalSlots) {
-      hasOverflow   = false;
-      maxVisible    = totalSlots;
-      firstThumbRow = 1;
-      lastThumbRow  = n - 2;
-    } else {
-      hasOverflow   = true;
-      maxVisible    = Math.max(0, totalSlots - 2);
-      firstThumbRow = 2;
-      lastThumbRow  = n - 3;
-    }
-
-    if (hasOverflow) {
-      makeBtn({
-        x, y: rowY(1), size: B,
-        onTap: () => scrollColoring(+1),
-        innerHTML: FP.icon('scrollUp', B * 0.44),
-        ariaLabel: 'Scroll coloring pages up',
-      });
-      makeBtn({
-        x, y: rowY(n - 2), size: B,
-        onTap: () => scrollColoring(-1),
-        innerHTML: FP.icon('scrollDown', B * 0.44),
-        ariaLabel: 'Scroll coloring pages down',
-      });
-    }
-
-    // Display pages bottom-to-top (page[0] at bottom, near save button),
-    // matching the saved-drawings strip order.
-    const visible = pages.slice(state.coloringScrollOffset,
-                                 state.coloringScrollOffset + maxVisible);
-    visible.forEach((page, i) => {
-      renderColoringThumb(page, x, rowY(lastThumbRow - i), B);
-    });
-  }
-
-  function _renderBookSelector(layout, orientation) {
-    const G = layout.G;
+  // Returns the {left,top,width,height} of the contiguous strip-line range
+  // [slot 0 .. lastOccupiedSlot]. Used for auto-collapse hit-testing — taps
+  // inside this rect (including gaps between tiles) do NOT close the
+  // bookshelf; taps outside it DO.
+  function _computeBookshelfRowRect(layout, lastOccupiedSlot) {
     const B = layout.B;
-    const books = state.coloringBooks;
-    const thumbSize = Math.floor(B * 0.8);
-
-    if (orientation === 'landscape') {
-      // Horizontal pill buttons above the page strip
-      const y = layout.bottomRow.y - B - G;  // Above the bottom row
-      let x = G;
-
-      books.forEach((book) => {
-        const isActive = state.currentBookId === book.id;
-
-        // Create canvas for book thumbnail
-        const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = thumbSize;
-        canvas.style.cssText = `position:absolute;left:${x}px;top:${y}px;cursor:pointer;border:${isActive ? '3px solid #4CAF50' : '1px solid #ccc'};border-radius:4px;pointer-events:auto;z-index:100;`;
-        canvas.setAttribute('aria-label', book.name);
-        canvas.title = book.name;
-        canvas.addEventListener('click', () => handleColoringBookSwitch(book.id));
-        buttonLayer.appendChild(canvas);
-
-        const ctx = canvas.getContext('2d');
-
-        // Try to load and display thumbnail if available
-        if (book.thumbnail) {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => {
-            ctx.drawImage(img, 0, 0, thumbSize, thumbSize);
-            if (isActive) {
-              ctx.strokeStyle = '#4CAF50';
-              ctx.lineWidth = 3;
-              ctx.strokeRect(0, 0, thumbSize, thumbSize);
-            }
-          };
-          img.onerror = () => {
-            // Fallback if thumbnail fails to load
-            ctx.fillStyle = '#f0f0f0';
-            ctx.fillRect(0, 0, thumbSize, thumbSize);
-            ctx.fillStyle = '#333333';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
-          };
-          img.src = _coloringDir() + book.thumbnail;
-        } else {
-          // Text label for books without thumbnail
-          ctx.fillStyle = '#f0f0f0';
-          ctx.fillRect(0, 0, thumbSize, thumbSize);
-          ctx.fillStyle = '#333333';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
-        }
-
-        x += thumbSize + G;
-      });
+    const firstXY = layout.bookshelfSlotXY(0);
+    const lastXY  = layout.bookshelfSlotXY(lastOccupiedSlot);
+    if (layout.orientation === 'landscape') {
+      const left  = Math.min(firstXY.x, lastXY.x);
+      const right = Math.max(firstXY.x, lastXY.x) + B;
+      return { left, top: firstXY.y, width: right - left, height: B };
     } else {
-      // Vertical pill buttons for portrait, positioned on right side above the page list
-      const x = layout.rightCol?.x ?? (window.innerWidth - thumbSize - layout.G);
-      const topY = layout.G;  // Start near the top, above the page list
-      let y = topY;
+      // Portrait: slot 0 is at the bottom, higher slots are above.
+      const top    = Math.min(firstXY.y, lastXY.y);
+      const bottom = Math.max(firstXY.y, lastXY.y) + B;
+      return { left: firstXY.x, top, width: B, height: bottom - top };
+    }
+  }
 
-      books.forEach((book) => {
-        const isActive = state.currentBookId === book.id;
+  // Renders the bookshelf overlay items in slots 2..n-1 of the strip line.
+  //
+  // Items list:
+  //   non-Crayon: [Upload tile, ...books]   (Upload is the "first book";
+  //                                          scrolling forward hides it)
+  //   Crayon:     [...books]                (no Upload — kid-safe)
+  //
+  // Layout model: items always occupy slots 2..n-1 (totalVisibleSlots wide).
+  // When overflow exists, scroll arrows REPLACE the leftmost / rightmost
+  // visible item — they don't insert into a new slot. So each tap of
+  // scroll-forward visually shifts every book one slot to the left (the
+  // book that was at slot 2 disappears behind the scroll-back arrow that
+  // now occupies slot 2).
+  //
+  // Returns the highest slot the overlay drew into (so renderStrip knows
+  // whether to render Clear in slot n-1).
+  function _renderBookshelfOverlay(layout) {
+    const B = layout.B;
+    const n = layout.bookshelfSlotCount;
+    const totalVisibleSlots = Math.max(0, n - 2);   // slots 2..n-1
 
-        // Create canvas for book thumbnail
-        const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = thumbSize;
-        canvas.style.cssText = `position:absolute;left:${x}px;top:${y}px;cursor:pointer;border:${isActive ? '3px solid #4CAF50' : '1px solid #ccc'};border-radius:4px;pointer-events:auto;z-index:100;`;
-        canvas.setAttribute('aria-label', book.name);
-        canvas.title = book.name;
-        canvas.addEventListener('click', () => handleColoringBookSwitch(book.id));
-        buttonLayer.appendChild(canvas);
+    const items = [];
+    if (!CFG.clearOnly) items.push({ kind: 'upload' });
+    state.coloringBooks.forEach(book => items.push({ kind: 'book', book }));
 
-        const ctx = canvas.getContext('2d');
+    const N = items.length;
+    if (N === 0 || totalVisibleSlots === 0) return 1;
 
-        // Try to load and display thumbnail if available
-        if (book.thumbnail) {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => {
-            ctx.drawImage(img, 0, 0, thumbSize, thumbSize);
-            if (isActive) {
-              ctx.strokeStyle = '#4CAF50';
-              ctx.lineWidth = 3;
-              ctx.strokeRect(0, 0, thumbSize, thumbSize);
-            }
-          };
-          img.onerror = () => {
-            ctx.fillStyle = '#f0f0f0';
-            ctx.fillRect(0, 0, thumbSize, thumbSize);
-            ctx.fillStyle = '#333333';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
-          };
-          img.src = _coloringDir() + book.thumbnail;
-        } else {
-          ctx.fillStyle = '#f0f0f0';
-          ctx.fillRect(0, 0, thumbSize, thumbSize);
-          ctx.fillStyle = '#333333';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(book.name.substring(0, 6), thumbSize / 2, thumbSize / 2);
-        }
+    const overflow = N > totalVisibleSlots;
+    const maxOffset = Math.max(0, N - totalVisibleSlots);
+    const offset = Math.min(state.coloringScrollOffset, maxOffset);
 
-        y += thumbSize + layout.G;
+    // Window of items that map to slots 2..(2 + slotCount - 1). With overflow,
+    // scroll-back covers items[offset] and/or scroll-forward covers the last
+    // visible item — both are still in the window but visually replaced.
+    const slotCount = Math.min(totalVisibleSlots, N - offset);
+    const visibleItems = items.slice(offset, offset + slotCount);
+    const firstSlot = 2;
+    const scrollBack    = overflow && offset > 0;
+    const scrollForward = overflow && offset < maxOffset;
+
+    // Render each item at its slot, skipping the slot under a scroll arrow
+    // (the arrow takes the slot's tap; the underlying item is unreachable
+    // until the user scrolls).
+    visibleItems.forEach((item, i) => {
+      const slot = firstSlot + i;
+      if (scrollBack && slot === firstSlot) return;                          // covered by scroll-back
+      if (scrollForward && slot === firstSlot + slotCount - 1) return;       // covered by scroll-forward
+      const pos = layout.bookshelfSlotXY(slot);
+      if (item.kind === 'upload') {
+        makeBtn({
+          x: pos.x, y: pos.y, size: B,
+          onTap: handleUploadTap,
+          innerHTML: FP.icon('upload', B * 0.44),
+          ariaLabel: 'Upload background',
+          disabled: state.disabledButtons.has('upload'),
+        });
+      } else {
+        _renderBookCoverTile(item.book, pos.x, pos.y, B);
+      }
+    });
+
+    // Scroll-back arrow at slot 2 (replacing items[offset])
+    if (scrollBack) {
+      const pos = layout.bookshelfSlotXY(firstSlot);
+      const icon = layout.orientation === 'landscape' ? 'scrollLeft' : 'scrollDown';
+      makeBtn({
+        x: pos.x, y: pos.y, size: B,
+        onTap: () => scrollBookshelf(-1),
+        innerHTML: FP.icon(icon, B * 0.44),
+        ariaLabel: 'Scroll books back',
       });
     }
+
+    // Scroll-forward arrow at the rightmost visible slot (replacing the last
+    // visible item)
+    if (scrollForward) {
+      const pos = layout.bookshelfSlotXY(firstSlot + slotCount - 1);
+      const icon = layout.orientation === 'landscape' ? 'scrollRight' : 'scrollUp';
+      makeBtn({
+        x: pos.x, y: pos.y, size: B,
+        onTap: () => scrollBookshelf(+1),
+        innerHTML: FP.icon(icon, B * 0.44),
+        ariaLabel: 'Scroll books forward',
+      });
+    }
+
+    return slotCount > 0 ? firstSlot + slotCount - 1 : 1;
+  }
+
+  function _renderBookCoverTile(book, x, y, B) {
+    // Book covers only show the "this one's selected" outline while the
+    // picker is open. When the picker is closed, no book is highlighted —
+    // the bookshelf is just a chooser, not a state indicator.
+    const isActive = FP.pagePicker.isOpen()
+      && FP.pagePicker.getBookId() === book.id;
+    const btn = makeBtn({
+      x, y, size: B,
+      active: isActive,
+      onTap: () => handleBookTap(book),
+      ariaLabel: book.name,
+      extraClass: 'thumb',
+    });
+    // Resolve cover via the manifest→cover.[ext]→first-page chain. The
+    // synthetic saved book resolves to its most-recent drawing's thumb (or
+    // null when empty — show the book name as a fallback).
+    FP.coloringBook.resolveBookCover(book).then(cover => {
+      if (!btn.parentNode) return;  // tile was removed by a re-render
+      if (cover) {
+        const img = document.createElement('img');
+        img.src = cover;
+        img.alt = '';
+        btn.appendChild(img);
+      } else {
+        const label = document.createElement('span');
+        label.textContent = book.name;
+        label.style.cssText = 'font-size:' + Math.max(8, B * 0.11) + 'px;text-align:center;padding:4px;line-height:1.1;color:#333;';
+        btn.appendChild(label);
+      }
+    }).catch(err => console.warn('book cover failed', err));
   }
 
   function renderColoringThumb(page, x, y, B) {
-    if (state.coloringConfirmReloadId === page.id && !page.isBlank) {
+    if (state.coloringConfirmReloadId === page.id && !page.isBlank && !page.isSavedDrawing) {
       // Replace this slot with the reload button (second-tap confirm).
-      // (Don't show reload confirm for the blank canvas)
+      // (Don't show reload confirm for the blank canvas or saved drawings)
       makeBtn({
         x, y, size: B, accent: true,
         onTap: () => handleColoringPageReloadConfirm(page),
@@ -814,9 +716,12 @@
       });
       return;
     }
+    const isActive = page.isSavedDrawing
+      ? (state.loadedDrawingId === (page.entry && page.entry.id))
+      : (state.currentColoringPageId === page.id);
     const btn = makeBtn({
       x, y, size: B,
-      active: state.currentColoringPageId === page.id,
+      active: isActive,
       onTap: () => handleColoringPageTap(page),
       ariaLabel: page.name,
       extraClass: 'thumb',
@@ -832,6 +737,15 @@
       ctx.fillRect(0, 0, thumbSize, thumbSize);
       const img = document.createElement('img');
       img.src = c.toDataURL('image/png');
+      img.alt = '';
+      btn.appendChild(img);
+      return;
+    }
+
+    // Saved-drawing entry — show the stored composite thumb (v1 png or v2 thumb).
+    if (page.isSavedDrawing) {
+      const img = document.createElement('img');
+      img.src = page.entry.thumb || page.entry.png;
       img.alt = '';
       btn.appendChild(img);
       return;
@@ -895,7 +809,7 @@
   }
 
   // Generic button factory — appended to buttonLayer.
-  function makeBtn({ x, y, size, bg, color, active, accent, indicator, disabled,
+  function makeBtn({ x, y, size, bg, color, active, accent, indicator, disabled, inactive,
                      onTap, innerHTML, ariaLabel, extraClass, isColorSwatch }) {
     const b = document.createElement('button');
     b.className = 'btn';
@@ -903,6 +817,7 @@
     if (accent)    b.classList.add('accent');
     if (indicator) b.classList.add('indicator');
     if (disabled)  b.classList.add('disabled');
+    if (inactive)  b.classList.add('inactive');
     if (color && LIGHT_COLORS.has(color)) b.classList.add('light-color');
     if (extraClass) b.classList.add(extraClass);
     if (ariaLabel)  b.setAttribute('aria-label', ariaLabel);
@@ -1104,8 +1019,8 @@
     const thumb = canvasComp.toThumbnailDataURL();
     FP.storage.add(bg, draw, thumb);
     state.saved = FP.storage.list();
+    _refreshSavedBookPagesIfActive();
     state.savedJustNow = true;
-    state.scrollOffset = 0;  // scroll to show new drawing at front
     canvasComp.markSaved();  // reset dirty so next stroke re-triggers onDirtyChange
     if (state.isFullscreen) disableBtn('save');  // no re-saving until drawing changes
     FP.playSound('saveDrawing');
@@ -1119,13 +1034,11 @@
       if (choice !== 'delete') return;
       FP.storage.remove(entry.id);
       state.saved = FP.storage.list();
+      _refreshSavedBookPagesIfActive();
       state.loadedDrawingId = null;
       state.loadedDrawingEntry = null;
       state.savedJustNow    = false;
       enableBtn('save');  // canvas now has no saved copy — allow saving in fullscreen
-      // Clamp scrollOffset
-      state.scrollOffset = Math.max(0, Math.min(
-        state.scrollOffset, Math.max(0, state.saved.length - 1)));
       FP.playSound('deleteDrawing');
       renderAll();
     } else {
@@ -1160,15 +1073,6 @@
     return canvasComp.loadLayersFromDataUrls(entry.bg, entry.draw);
   }
 
-  function scrollSaved(direction) {
-    if (!lastLayout) return;
-    const r = lastLayout.bottomRow || lastLayout.rightCol;
-    const max  = Math.max(0, state.saved.length - r.maxVisible);
-    state.scrollOffset = Math.max(0, Math.min(max, state.scrollOffset + direction));
-    FP.playSound('scroll');
-    renderAll();
-  }
-
   // ── Background upload flow ────────────────────────────────────
   function handleUploadTap() {
     document.getElementById('bg-upload-input').click();
@@ -1178,6 +1082,11 @@
     const file = e.target.files && e.target.files[0];
     e.target.value = '';                 // allow re-selecting the same file
     if (!file) return;
+
+    // If the picker was open (Upload is reachable from the bookshelf strip
+    // while the picker is showing), close it so the uploaded image becomes
+    // visible without the picker covering it.
+    if (FP.pagePicker.isOpen()) FP.pagePicker.close();
 
     // Uploading a background means leaving the coloring page; autosave first.
     _leavingColoringPage();
@@ -1292,14 +1201,196 @@
   }
 
   // ── Coloring book handlers ────────────────────────────────────
+
+  // When viewing the synthetic saved book, the page list is derived from
+  // FP.storage.list() and must be re-pulled after any save or delete so the
+  // picker (Stage 3) reflects the latest content. The bookshelf-scroll
+  // clamping below is independent — it follows the book count, not the
+  // page count.
+  function _refreshSavedBookPagesIfActive() {
+    if (state.currentBookId === '__saved') {
+      state.coloringPages = FP.coloringBook.getSavedBookPages();
+    }
+  }
+
+  // Clamps state.coloringScrollOffset (the bookshelf's scroll position) into
+  // a valid range given the current layout and book/upload-tile count. Safe
+  // to call any time after lastLayout is set.
+  function _clampBookshelfScroll() {
+    if (!lastLayout) return;
+    state.coloringScrollOffset = Math.max(0, Math.min(
+      _maxBookshelfScroll(),
+      state.coloringScrollOffset));
+  }
+
+  // ── Page picker handlers + chrome ─────────────────────────────
+
+  // Tapping a book cover in the bookshelf: open the picker for that book,
+  // or close the picker if it's already open for this book (re-tap toggle).
+  async function handleBookTap(book) {
+    const bookId = book.id;
+    if (FP.pagePicker.isOpen() && FP.pagePicker.getBookId() === bookId) {
+      FP.pagePicker.close();
+      renderAll();
+      return;
+    }
+    // Switch to this book's pages and open the picker over the canvas.
+    const pages = await FP.coloringBook.switchBook(bookId);
+    state.currentBookId = bookId;
+    state.coloringPages = pages;
+    state.coloringConfirmReloadId = null;
+    FP.pagePicker.open(bookId);
+    renderAll();
+  }
+
+  // Tile tap inside the picker — close the picker, then delegate to the
+  // existing per-page-type load flow. Closing FIRST means the page-flip
+  // animation runs on a clean canvas (no picker-grid still painted on top).
+  //
+  // If the tapped tile is ALREADY the loaded content, we don't want
+  // handleColoringPageTap's existing "second tap" branches firing (which
+  // would arm the legacy reload-confirm or open the delete dialog through
+  // the wrong path). Just close the picker.
+  async function handlePickerTileTap(page) {
+    const loadedId = state.loadedDrawingId
+      ? 'saved:' + state.loadedDrawingId
+      : state.currentColoringPageId;
+    if (page.id === loadedId) {
+      FP.pagePicker.close();
+      renderAll();
+      return;
+    }
+    FP.pagePicker.close();
+    renderAll();
+    await handleColoringPageTap(page);
+  }
+
+  // × badge tap on a saved-drawing tile in the picker.
+  async function handlePickerDeleteSavedTile(entry) {
+    const choice = await FP.dialogs.deleteSaved();
+    if (choice !== 'delete') return;
+    FP.storage.remove(entry.id);
+    state.saved = FP.storage.list();
+    _refreshSavedBookPagesIfActive();
+    if (state.loadedDrawingId === entry.id) {
+      state.loadedDrawingId = null;
+      state.loadedDrawingEntry = null;
+      state.savedJustNow = false;
+      enableBtn('save');
+    }
+    FP.playSound('deleteDrawing');
+    renderAll();
+  }
+
+  // Picker grid-page navigation (prev/next chrome buttons).
+  function _pickerGridScroll(delta) {
+    if (!FP.pagePicker.isOpen() || !lastLayout) return;
+    const total = FP.pagePicker.getGridPageCount(lastLayout, state.coloringPages);
+    const cur = FP.pagePicker.getScrollOffset();
+    const next = Math.max(0, Math.min(total - 1, cur + delta));
+    if (next === cur) return;
+    FP.pagePicker.setScrollOffset(next);
+    FP.playSound('scroll');
+    renderAll();
+  }
+
+  // Contextual chrome that replaces the drawing-tools column while the
+  // picker is open. Placement:
+  //   Landscape (tools in right col, top→bottom): slot 1 = prev,
+  //     slot 2 = indicator, slot 3 = next. Slots 0, 4–7 stay empty.
+  //   Portrait  (tools in top row, left→right):   slot 3 = prev,
+  //     slot 4 = indicator, slot 5 = next. Slots 0–2, 6–7 stay empty.
+  //   Crayon (single bgFill slot):                indicator + tap-to-advance
+  //     (wraps when more than one grid-page).
+  //
+  // The remaining tool slots are intentionally blank — keeps the drawing
+  // tools fully unreachable so taps can't change the brush mid-pick.
+  function _renderPickerChrome(layout) {
+    const tools = layout.tools;
+    if (!tools.length) return;
+    const B = layout.B;
+    const total = FP.pagePicker.getGridPageCount(layout, state.coloringPages);
+    const cur = FP.pagePicker.getScrollOffset();
+    const isLandscape = layout.orientation === 'landscape';
+    const prevIcon = isLandscape ? 'scrollUp'   : 'scrollLeft';
+    const nextIcon = isLandscape ? 'scrollDown' : 'scrollRight';
+
+    const indicatorHtml =
+      `<div style="font-size:${Math.round(B*0.26)}px;font-weight:600;color:#333;text-align:center;line-height:1;">` +
+      `${cur+1}<br><span style="font-size:${Math.round(B*0.16)}px;opacity:0.6;">of ${total}</span>` +
+      `</div>`;
+
+    // Single-slot variant (Crayon): combine indicator + advance-on-tap.
+    if (tools.length === 1) {
+      const slot = tools[0];
+      makeBtn({
+        x: slot.x, y: slot.y, size: B,
+        indicator: true,
+        onTap: total > 1
+          ? () => {
+              const next = (FP.pagePicker.getScrollOffset() + 1) % total;
+              FP.pagePicker.setScrollOffset(next);
+              FP.playSound('scroll');
+              renderAll();
+            }
+          : null,
+        innerHTML: indicatorHtml,
+        ariaLabel: total > 1
+          ? `Grid-page ${cur+1} of ${total} (tap to advance)`
+          : `Grid-page ${cur+1} of ${total}`,
+        extraClass: 'picker-chrome',
+      });
+      return;
+    }
+
+    // 8-slot variants. Pick the slot indices per orientation; for both, the
+    // 3 chrome buttons are CONTIGUOUS (the user wanted prev/indicator/next
+    // grouped together, not spread across the tools column/row).
+    const prevIdx = isLandscape ? 1 : 3;
+    const midIdx  = isLandscape ? 2 : 4;
+    const nextIdx = isLandscape ? 3 : 5;
+    const prevSlot = tools[prevIdx];
+    const midSlot  = tools[midIdx];
+    const nextSlot = tools[nextIdx];
+    if (!prevSlot || !midSlot || !nextSlot) return;   // tools array too short
+
+    makeBtn({
+      x: prevSlot.x, y: prevSlot.y, size: B,
+      onTap: () => _pickerGridScroll(-1),
+      innerHTML: FP.icon(prevIcon, B * 0.44),
+      ariaLabel: 'Previous grid-page',
+      disabled: cur === 0,
+      extraClass: 'picker-chrome',
+    });
+    makeBtn({
+      x: midSlot.x, y: midSlot.y, size: B,
+      indicator: true,
+      innerHTML: indicatorHtml,
+      ariaLabel: `Grid-page ${cur+1} of ${total}`,
+      extraClass: 'picker-chrome',
+    });
+    makeBtn({
+      x: nextSlot.x, y: nextSlot.y, size: B,
+      onTap: () => _pickerGridScroll(+1),
+      innerHTML: FP.icon(nextIcon, B * 0.44),
+      ariaLabel: 'Next grid-page',
+      disabled: cur >= total - 1,
+      extraClass: 'picker-chrome',
+    });
+  }
+
   function handleColoringBookToggleTap() {
     state.coloringBookOpen = !state.coloringBookOpen;
     state.coloringConfirmReloadId = null;
+    if (!state.coloringBookOpen && FP.pagePicker.isOpen()) {
+      // The bookshelf just closed — close the picker too (the picker is a
+      // child surface of the bookshelf and can't outlive it).
+      FP.pagePicker.close();
+    }
     if (state.coloringBookOpen) {
-      // Clamp scroll into valid range any time we open.
-      state.coloringScrollOffset = Math.max(0, Math.min(
-        state.coloringScrollOffset,
-        Math.max(0, state.coloringPages.length - 1)));
+      // Pages for the saved book are reactive — pull the latest before opening.
+      _refreshSavedBookPagesIfActive();
+      _clampBookshelfScroll();
     }
     FP.playSound('dialogOpen');
     renderAll();
@@ -1309,12 +1400,23 @@
     const pages = await FP.coloringBook.switchBook(bookId);
     state.currentBookId = bookId;
     state.coloringPages = pages;
-    state.coloringScrollOffset = 0;  // Reset scroll to top when switching books
+    // NOTE: do NOT reset state.coloringScrollOffset — that's the BOOKSHELF
+    // scroll position (which book is visible), not the picker's scroll. The
+    // picker's grid-page scroll (Stage 3) is a separate variable that will
+    // reset on book switch.
     state.coloringConfirmReloadId = null;
     renderAll();
   }
 
   async function handleColoringPageTap(page) {
+    // Saved-drawing entry (when viewing the synthetic saved book) — delegate
+    // to the existing load/delete flow so behavior matches the saved-drawings
+    // strip exactly.
+    if (page.isSavedDrawing) {
+      await handleThumbTap(page.entry);
+      return;
+    }
+
     // Blank canvas entry — load plain white canvas instead
     if (page.isBlank) {
       if (state.currentColoringPageId === page.id) {
@@ -1464,27 +1566,35 @@
     canvasComp.setPageDimensions(null, null);
   }
 
-  function scrollColoring(direction) {
-    const pages = state.coloringPages.length;
-    if (pages === 0 || !lastLayout) return;
-    // Determine how many fit in the strip given the current layout.
-    let totalSlots;
-    if (lastLayout.orientation === 'landscape') {
-      totalSlots = Math.max(0, lastLayout.numCols - 2);
-    } else {
-      totalSlots = Math.max(0, lastLayout.numRows - 2);
-    }
-    const visibleCount = (pages > totalSlots) ? Math.max(0, totalSlots - 2) : totalSlots;
-    const max = Math.max(0, pages - visibleCount);
-    state.coloringScrollOffset = Math.max(0, Math.min(max, state.coloringScrollOffset + direction));
+  // Scrolls the bookshelf overlay (the books + Upload tile in the strip
+  // line). Bookshelf items count = books + 1 for Upload in non-Crayon.
+  // The max offset is the one where the last item lands in slot n-1
+  // (overlaying Clear), with scroll-back visible but scroll-forward hidden.
+  function scrollBookshelf(direction) {
+    if (!lastLayout) return;
+    state.coloringScrollOffset = Math.max(0, Math.min(
+      _maxBookshelfScroll(),
+      state.coloringScrollOffset + direction));
     FP.playSound('scroll');
     renderAll();
   }
 
-  // Migrates autosaves whose source file is no longer in coloring-pages/
-  // into the regular saved-drawings list. Runs once at boot after discover().
-  function migrateOrphanedColoringAutosaves(pages) {
-    const present = new Set(pages.map(p => p.id));
+  function _maxBookshelfScroll() {
+    const itemCount = state.coloringBooks.length + (CFG.clearOnly ? 0 : 1);
+    const totalVisibleSlots = Math.max(0, lastLayout.bookshelfSlotCount - 2);
+    if (itemCount <= totalVisibleSlots) return 0;
+    // Items always occupy slots 2..n-1; scroll arrows just cover the
+    // leftmost/rightmost ones. Max offset = where items[offset..N-1] are
+    // exactly totalVisibleSlots items long → the last item is at slot n-1.
+    return itemCount - totalVisibleSlots;
+  }
+
+  // Migrates autosaves whose source file is no longer in any coloring book's
+  // manifest into the regular saved-drawings list. Runs once at boot after
+  // discover(). Takes the union of page IDs across every coloring book so
+  // autosaves for pages in non-default books aren't falsely "orphaned".
+  function migrateOrphanedColoringAutosaves(allPageIds) {
+    const present = new Set(allPageIds);
     const ids = FP.coloringBook.allAutosaveIds();
     let moved = 0;
     for (const id of ids) {
@@ -1500,6 +1610,7 @@
     }
     if (moved > 0) {
       state.saved = FP.storage.list();
+      _refreshSavedBookPagesIfActive();
     }
   }
 })();

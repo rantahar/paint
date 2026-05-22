@@ -75,6 +75,25 @@ FP.icon = function (name, sizePx) {
   return svg;
 };
 
+/**
+ * Page-bg picker icon: a fan of 3 letter-shaped papers in `color`, each with
+ * a black outline so the stack reads as 3 distinct pages. Used in place of
+ * the regular color swatches when the page picker is open — visually cues
+ * the user that tapping selects a page BACKGROUND color, not a paint color.
+ */
+FP.pageFanIcon = function (color, sizePx) {
+  return `<svg width="${sizePx}" height="${sizePx}" viewBox="0 0 24 24">
+    <rect x="3.5" y="6" width="11" height="14" rx="0.8"
+          fill="${color}" stroke="#222" stroke-width="1.2"
+          transform="rotate(-14 9 13)"/>
+    <rect x="9.5" y="6" width="11" height="14" rx="0.8"
+          fill="${color}" stroke="#222" stroke-width="1.2"
+          transform="rotate(14 15 13)"/>
+    <rect x="6.5" y="3.5" width="11" height="14" rx="0.8"
+          fill="${color}" stroke="#222" stroke-width="1.2"/>
+  </svg>`;
+};
+
 // Active checkmark overlay — white check with black halo, bottom-right corner
 FP.activeMark = function (sizePx) {
   const s = Math.max(8, sizePx * 0.38);

@@ -78,21 +78,43 @@ process_book() {
     output="$book_dir/processed/$filename"
 
     if [ -n "$MAGICK_CMD" ]; then
+      # Skip processing if the source already has an alpha channel — it's
+      # been through this pipeline before, and re-processing would collapse
+      # the all-black RGB (after -alpha off) into a 1px square via -trim.
+      # The processed PNG is already in the desired shape; copy as-is.
+      src_alpha=$("$MAGICK_CMD" "$png" -format '%A' info: 2>/dev/null | head -c 16)
+      case "$src_alpha" in
+        True|Blend)
+          echo "    $filename (already processed — passing through)"
+          cp "$png" "$output"
+          continue
+          ;;
+      esac
+
       echo "    $filename"
       # Greyscale + trim + resize, then luminance → alpha.
       # Algorithm: alpha = 255 - luma, RGB forced to black.
-      #   1. -negate       inverts grey channel (black src → white, white src → black)
-      #   2. -alpha copy   copies the inverted intensity into a new alpha channel
-      #   3. -fill black -colorize 100   forces RGB to black, leaves alpha intact
+      #   1. -alpha off    discard any input alpha (avoids -negate flipping it)
+      #   2. -colorspace Gray
+      #   3. -negate       inverts grey channel (black src → white, white src → black)
+      #   4. -alpha copy   turns on alpha + copies intensity into it
+      #   5. -channel RGB -fill black -colorize 100 +channel
+      #                    fills RGB with black, SCOPED so alpha is preserved
       # Result: black lines opaque, white paper transparent, anti-aliased greys
       # become semi-transparent BLACK (not grey-on-bg) over the runtime bg color.
+      #
+      # NOTE: the scoped colorize is essential. Without `-channel RGB ... +channel`,
+      # `-colorize 100` blends the fill color (rgba(0,0,0,255)) into every
+      # channel including alpha, which sets alpha=255 everywhere and produces
+      # solid-black opaque output ("blank black pages").
       "$MAGICK_CMD" "$png" \
+        -alpha off \
         -colorspace Gray \
         -trim \
         -resize '1000x>' \
         -negate \
         -alpha copy \
-        -fill black -colorize 100 \
+        -channel RGB -fill black -colorize 100 +channel \
         -depth 8 \
         "$output"
     else

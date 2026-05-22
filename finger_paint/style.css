@@ -162,6 +162,18 @@ html, body {
 .btn.active {
   outline: 3px solid #1177EE;
   outline-offset: 1px;
+  /* No z-index override here — keeping the default .btn z-index (4) so an
+     active button stays above the page-picker backdrop (z 3). The outline
+     is 3px with 1px offset = 4px outside the button; adjacent buttons are
+     separated by ≥G px which is comfortably larger, so no need to lift z
+     to avoid neighbor clipping. */
+}
+
+/* When the page picker is open, buttons tagged "below picker" drop UNDER
+   the backdrop (z 3) so the backdrop's shadow visibly darkens them — used
+   for the Save button per the redesign. The button stays in the DOM but is
+   visually dimmed and the backdrop catches taps on its area. */
+.btn.picker-below {
   z-index: 2;
 }
 
@@ -173,6 +185,15 @@ html, body {
   opacity: 0.6;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* "Inactive" — same dimmed look as .disabled, but still accepts taps. Used
+   when a button is contextually unavailable for its primary action but
+   should still consume the tap (e.g., Clear while the bookshelf is open
+   closes the bookshelf instead of clearing). */
+.btn.inactive {
+  filter: grayscale(100%);
+  opacity: 0.6;
 }
 
 body.dialog-open .btn {
@@ -230,11 +251,59 @@ body.dialog-open .btn {
   position: absolute;
   border: 1px solid rgba(0,0,0,0.1);
   pointer-events: none;
-  z-index: 3;
+  z-index: 2;       /* sits with the painting; the page-picker backdrop (z 3) goes over it */
 }
 
 /* Buttons are above all other elements */
 .btn { z-index: 4; }
+
+/* ── Page picker (modal grid over the canvas) ── */
+.page-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 3;        /* over canvas + border (z 2), under regular .btn (z 4) so the
+                        color palette, Save, Bookshelf-toggle, and Clear stay
+                        interactive above the shadow */
+  pointer-events: auto;
+  animation: fadeIn 140ms ease-out;
+}
+
+/* Picker tiles + contextual chrome (prev/indicator/next) sit ABOVE the regular
+   .btn z-index so they're clickable on top of the backdrop and the drawing-
+   tools buttons that would otherwise overlap them. */
+.page-picker-grid .btn,
+.btn.picker-chrome {
+  z-index: 5;
+}
+
+/* Tiles use the same .btn.thumb image sizing already defined above. The grid
+   itself is positioned absolutely by JS, one tile per (B × B) slot. */
+.page-picker-grid {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;   /* tile buttons opt back in via .btn pointer-events:auto */
+}
+
+/* Small delete badge in the top-right corner of saved-drawing tiles. */
+.page-tile-delete {
+  position: absolute;
+  z-index: 6;
+  border-radius: 50%;
+  background: #ffd0c0;
+  border: 2px solid #cc4422;
+  color: #882200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  padding: 0;
+  font: inherit;
+}
+.page-tile-delete:active { transform: scale(0.96); }
+.page-tile-delete svg { pointer-events: none; }
 
 /* ── Modal dialog ── */
 .dialog-backdrop {
