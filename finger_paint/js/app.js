@@ -60,8 +60,7 @@
     currentBookId:           null,            // currently selected book (defaults to '__saved')
     coloringBooks:           [],              // discovered books (from FP.coloringBook.getBooks())
     coloringScrollOffset:    0,               // bookshelf overlay scroll position (in items)
-    coloringConfirmReloadId: null,            // page whose tile shows the reload-confirm (Stage 4 will remove this)
-    coloringPages:           [],              // pages of the currently-opened book (used by Stage 3's picker)
+    coloringPages:           [],              // pages of the currently-opened book (used by the page picker)
   };
 
   // Expose state so canvas.js (and any other FP module) can read pointerDownOnButton
@@ -71,7 +70,6 @@
   let canvasComp = null;       // FP.PaintingCanvas instance
   let appRoot    = null;
   let buttonLayer = null;      // div holding all toolbar buttons
-  let panelLayer  = null;      // div holding panel-bg elements
   let lastLayout  = null;
 
   // ── Fullscreen ────────────────────────────────────────────────
@@ -150,11 +148,9 @@
 
     appRoot = document.getElementById('app');
 
-    // Layers (back to front): panel bgs → painting → buttons (buttons sit on top)
-    panelLayer = document.createElement('div');
-    panelLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
-    appRoot.appendChild(panelLayer);
-
+    // Layers (back to front): painting → buttons (buttons sit on top). The
+    // canvas slots neatly between the side/bottom toolbars; no separate
+    // panel background layer is needed.
     const paintingWrap = document.createElement('div');
     appRoot.appendChild(paintingWrap);
     canvasComp = new FP.PaintingCanvas(paintingWrap);
@@ -362,14 +358,8 @@
     canvasComp.setRect(canvasRect, state.frameMode);
 
     // Clear layers
-    panelLayer.innerHTML  = '';
     buttonLayer.innerHTML = '';
 
-    // In Crayon mode, never show the toolbar panel backgrounds (buttons float
-    // over the canvas, matching the kid-safe minimal aesthetic).
-    if (state.frameMode && !CFG.clearOnly) {
-      renderPanels(layout);
-    }
     renderColorSwatches(layout);
     renderTools(layout);
     renderStrip(layout);
@@ -379,26 +369,6 @@
     // regular .btn z-index (the color palette and corner buttons stay
     // clickable above the picker's shadow).
     FP.pagePicker.render(appRoot, layout, state.coloringPages);
-  }
-
-  function renderPanels(layout) {
-    layout.panels.forEach((p) => {
-      const el = document.createElement('div');
-      el.className = 'panel-bg';
-      if (p.borders) {
-        if (p.borders.top)    el.classList.add('with-border-top');
-        if (p.borders.bottom) el.classList.add('with-border-bottom');
-        if (p.borders.left)   el.classList.add('with-border-left');
-        if (p.borders.right)  el.classList.add('with-border-right');
-      }
-      Object.assign(el.style, {
-        left:   p.left   + 'px',
-        top:    p.top    + 'px',
-        width:  p.width  + 'px',
-        height: p.height + 'px',
-      });
-      panelLayer.appendChild(el);
-    });
   }
 
   function renderColorSwatches(layout) {
@@ -543,13 +513,22 @@
     // pass through to the canvas and start a stroke).
     const lastSlot = layout.bookshelfSlotCount - 1;
     if (!open || highestSlotUsed < lastSlot) {
+      // When the picker is open, Clear drops behind the lightbox (z 2) so
+      // it can't fire — the user shouldn't be able to wipe the canvas
+      // mid-pick. The lightbox catches the tap and closes the picker. When
+      // only the bookshelf (no picker) is open, Clear stays interactive but
+      // dimmed and its tap closes the bookshelf.
+      const pickerOpen = FP.pagePicker.isOpen();
+      const extras = [];
+      if (open && !pickerOpen) extras.push('inactive');
+      if (pickerOpen)          extras.push('picker-below');
       makeBtn({
         x: layout.clearXY.x, y: layout.clearXY.y, size: B,
         accent: true,
         onTap: open ? handleColoringBookToggleTap : handleClearTap,
         innerHTML: FP.icon('clear', B * 0.44),
         ariaLabel: open ? 'Close bookshelf' : 'Clear drawing',
-        inactive: open,
+        extraClass: extras.length ? extras.join(' ') : null,
       });
     }
 
@@ -704,110 +683,6 @@
     }).catch(err => console.warn('book cover failed', err));
   }
 
-  function renderColoringThumb(page, x, y, B) {
-    if (state.coloringConfirmReloadId === page.id && !page.isBlank && !page.isSavedDrawing) {
-      // Replace this slot with the reload button (second-tap confirm).
-      // (Don't show reload confirm for the blank canvas or saved drawings)
-      makeBtn({
-        x, y, size: B, accent: true,
-        onTap: () => handleColoringPageReloadConfirm(page),
-        innerHTML: FP.icon('reload', B * 0.44),
-        ariaLabel: 'Reload page (clear all your work)',
-      });
-      return;
-    }
-    const isActive = page.isSavedDrawing
-      ? (state.loadedDrawingId === (page.entry && page.entry.id))
-      : (state.currentColoringPageId === page.id);
-    const btn = makeBtn({
-      x, y, size: B,
-      active: isActive,
-      onTap: () => handleColoringPageTap(page),
-      ariaLabel: page.name,
-      extraClass: 'thumb',
-    });
-
-    // Blank canvas entry — render a white thumbnail
-    if (page.isBlank) {
-      const thumbSize = 160;
-      const c = document.createElement('canvas');
-      c.width = c.height = thumbSize;
-      const ctx = c.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, thumbSize, thumbSize);
-      const img = document.createElement('img');
-      img.src = c.toDataURL('image/png');
-      img.alt = '';
-      btn.appendChild(img);
-      return;
-    }
-
-    // Saved-drawing entry — show the stored composite thumb (v1 png or v2 thumb).
-    if (page.isSavedDrawing) {
-      const img = document.createElement('img');
-      img.src = page.entry.thumb || page.entry.png;
-      img.alt = '';
-      btn.appendChild(img);
-      return;
-    }
-
-    // Prefer the autosaved thumbnail (shows the user's painted state on the
-    // page) if present; otherwise generate a smooth canvas-based thumbnail.
-    const autosave = FP.coloringBook.getAutosave(page.id);
-    if (autosave && autosave.thumb) {
-      const img = document.createElement('img');
-      img.src = autosave.thumb;
-      img.alt = '';
-      btn.appendChild(img);
-    } else {
-      // No autosave: generate a smooth canvas thumbnail from the page image
-      FP.coloringBook.loadImage(page).then(image => {
-        const thumbDataUrl = FP.PaintingCanvas.generateThumbnailFromImage(image, 160);
-        const img = document.createElement('img');
-        img.src = thumbDataUrl;
-        img.alt = '';
-        // Only append if the button still exists (it may have been removed by scrolling)
-        if (btn.parentNode) {
-          btn.appendChild(img);
-        }
-      }).catch(err => {
-        console.warn('Failed to generate coloring page thumbnail', err);
-        // Fallback: show the raw image
-        const img = document.createElement('img');
-        img.src = page.url;
-        img.alt = '';
-        if (btn.parentNode) btn.appendChild(img);
-      });
-    }
-  }
-
-  function renderThumb(entry, x, y, B) {
-    const isLoaded = state.loadedDrawingId === entry.id;
-    const onTap = () => handleThumbTap(entry);
-    if (isLoaded) {
-      // Render as Delete button instead of the thumbnail
-      makeBtn({
-        x, y, size: B, accent: true,
-        onTap,
-        innerHTML: FP.icon('delete', B * 0.44),
-        ariaLabel: 'Delete this saved drawing',
-      });
-    } else {
-      const btn = makeBtn({
-        x, y, size: B,
-        onTap,
-        ariaLabel: 'Open saved drawing',
-        extraClass: 'thumb',
-      });
-      const img = document.createElement('img');
-      // v2 entries have a dedicated thumb; v1 legacy entries store the
-      // composite under `png` (the v1→v2 read-shim sets thumb = png).
-      img.src = entry.thumb || entry.png;
-      img.alt = '';
-      btn.appendChild(img);
-    }
-  }
-
   // Generic button factory — appended to buttonLayer.
   function makeBtn({ x, y, size, bg, color, active, accent, indicator, disabled, inactive,
                      onTap, innerHTML, ariaLabel, extraClass, isColorSwatch }) {
@@ -819,7 +694,7 @@
     if (disabled)  b.classList.add('disabled');
     if (inactive)  b.classList.add('inactive');
     if (color && LIGHT_COLORS.has(color)) b.classList.add('light-color');
-    if (extraClass) b.classList.add(extraClass);
+    if (extraClass) extraClass.split(/\s+/).filter(Boolean).forEach(c => b.classList.add(c));
     if (ariaLabel)  b.setAttribute('aria-label', ariaLabel);
 
     Object.assign(b.style, {
@@ -960,8 +835,8 @@
       return;
     }
     // On a coloring page: wipe strokes but preserve the chosen bg color,
-    // outline, and overlay. Hard-reset (drop bg color too) is still reachable
-    // via double-tap on the thumbnail → handleColoringPageReloadConfirm.
+    // outline, and overlay. (Stage 4: the old double-tap-to-reset path is
+    // gone — users can erase + bgFill to clean up.)
     if (state.currentColoringPageId) {
       await canvasComp.pageFlip(async () => {
         canvasComp.clearDrawing();
@@ -1014,10 +889,16 @@
   }
 
   function doSave() {
-    const bg    = canvasComp.toBackgroundDataURL();
-    const draw  = canvasComp.toDrawingDataURL();
-    const thumb = canvasComp.toThumbnailDataURL();
-    FP.storage.add(bg, draw, thumb);
+    // v3 entry shape: { bgColor, draw, thumb }. The bg layer is the canvas's
+    // current solid fill (uploaded image backgrounds collapse to their corner
+    // color — accepted loss). The draw layer is full transparent content
+    // (strokes + overlay for coloring pages). The thumb is the transparent
+    // version so the picker's 3-layer compositing can swap the bg under
+    // preview color.
+    const bgColor = canvasComp.getBgColor();
+    const draw    = canvasComp.toDrawingDataURL();
+    const thumb   = canvasComp.toTransparentThumbnailDataURL();
+    FP.storage.add(bgColor, draw, thumb);
     state.saved = FP.storage.list();
     _refreshSavedBookPagesIfActive();
     state.savedJustNow = true;
@@ -1027,7 +908,7 @@
     renderAll();
   }
 
-  async function handleThumbTap(entry) {
+  async function handleThumbTap(entry, bgColorOverride) {
     if (state.loadedDrawingId === entry.id) {
       // Already loaded — Delete confirmation flow
       const choice = await FP.dialogs.deleteSaved();
@@ -1051,12 +932,17 @@
         if (choice === 'cancel' || choice == null) return;
         if (choice === 'save') doSave();
       }
-      // Load this drawing onto the canvas (with page flip)
+      // Load this drawing onto the canvas (with page flip). The
+      // bgColorOverride (Stage 4 preview color, if set) replaces the entry's
+      // stored bgColor for this load only — the stored row is unchanged.
       await canvasComp.pageFlip(async () => {
-        await _loadSavedEntry(entry);
+        await _loadSavedEntry(entry, bgColorOverride);
         state.loadedDrawingId = entry.id;
         state.loadedDrawingEntry = entry;
         state.savedJustNow    = true;  // show download button for the loaded drawing
+        // Saved drawings load in full view (canvas fills the available
+        // area) — frameMode unified per Stage 4.
+        state.frameMode = false;
         // Do NOT re-enable save button — loaded drawing is already saved
       }, PAGE_FLIP_ANIMATION, () => {
         renderAll();
@@ -1064,13 +950,16 @@
     }
   }
 
-  // Loads a saved entry (v1 png or v2 bg+draw) onto the canvas.
-  function _loadSavedEntry(entry) {
-    if (entry.png) {
-      // legacy v1 shape — composite, no separate draw layer
-      return canvasComp.loadCompositeFromDataUrl(entry.png);
-    }
-    return canvasComp.loadLayersFromDataUrls(entry.bg, entry.draw);
+  // Loads a v3 saved entry onto the canvas. v1/v2 entries are auto-migrated
+  // to v3 during FP.storage.init() (corner-sampled bgColor, draw layer
+  // preserved as-is) so by the time we get here every entry has a bgColor
+  // and (usually) a draw layer.
+  //
+  // `bgColorOverride` (Stage 4 preview): if set, replaces the entry's stored
+  // bgColor for this load only. The stored entry is unchanged.
+  function _loadSavedEntry(entry, bgColorOverride) {
+    const bgColor = bgColorOverride || entry.bgColor || '#ffffff';
+    return canvasComp.loadLayersFromColorAndDraw(bgColor, entry.draw);
   }
 
   // ── Background upload flow ────────────────────────────────────
@@ -1167,17 +1056,11 @@
   // ── Dirty / saved flag plumbing ───────────────────────────────
   function onDirtyChange(dirty) {
     if (dirty) {
-      // In crayon mode the strip occupies the full bottom area; auto-collapse
-      // it the moment the user starts drawing so the canvas isn't covered.
-      if (CFG.clearOnly && state.coloringBookOpen) {
-        state.coloringBookOpen = false;
-      }
-      // Clear reload-confirm on any dirty draw (not just crayon mode).
-      // When the user draws, the page is no longer "clean" so the reload
-      // button should disappear and revert to the page thumbnail.
-      if (state.currentColoringPageId) {
-        state.coloringConfirmReloadId = null;
-      }
+      // (The bookshelf is auto-collapsed by the document-level pointerdown
+      // listener in init() — any pointerdown outside the bookshelf row
+      // closes it. The first stroke's pointerdown on the canvas triggers
+      // that listener BEFORE onDirtyChange fires, so we don't need a
+      // mode-specific close here.)
       onCanvasContentChanged();
       renderAll();
     }
@@ -1234,11 +1117,14 @@
       renderAll();
       return;
     }
+    // Autosave the current coloring page (if any) BEFORE opening the picker
+    // so its tile thumbnail reflects the user's current state. Cheap; no-op
+    // when not on a coloring page or when on the blank canvas.
+    autosaveCurrentColoringPage();
     // Switch to this book's pages and open the picker over the canvas.
     const pages = await FP.coloringBook.switchBook(bookId);
     state.currentBookId = bookId;
     state.coloringPages = pages;
-    state.coloringConfirmReloadId = null;
     FP.pagePicker.open(bookId);
     renderAll();
   }
@@ -1247,22 +1133,26 @@
   // existing per-page-type load flow. Closing FIRST means the page-flip
   // animation runs on a clean canvas (no picker-grid still painted on top).
   //
-  // If the tapped tile is ALREADY the loaded content, we don't want
-  // handleColoringPageTap's existing "second tap" branches firing (which
-  // would arm the legacy reload-confirm or open the delete dialog through
-  // the wrong path). Just close the picker.
+  // If the tapped tile is ALREADY the loaded content, just close the picker
+  // (no reload, no delete dialog — the × badge is the delete affordance).
+  //
+  // The picker's preview color (set by tapping a bg-color fan icon while
+  // the picker is open) is passed through as `bgColorOverride` to the load
+  // path — for coloring pages it wins over the autosaved bgColor and gets
+  // written back; for saved drawings it replaces the bg for this load only.
   async function handlePickerTileTap(page) {
     const loadedId = state.loadedDrawingId
       ? 'saved:' + state.loadedDrawingId
       : state.currentColoringPageId;
-    if (page.id === loadedId) {
+    const bgColorOverride = FP.pagePicker.getPreviewBgColor();
+    if (page.id === loadedId && !bgColorOverride) {
       FP.pagePicker.close();
       renderAll();
       return;
     }
     FP.pagePicker.close();
     renderAll();
-    await handleColoringPageTap(page);
+    await handleColoringPageTap(page, bgColorOverride);
   }
 
   // × badge tap on a saved-drawing tile in the picker.
@@ -1381,13 +1271,14 @@
 
   function handleColoringBookToggleTap() {
     state.coloringBookOpen = !state.coloringBookOpen;
-    state.coloringConfirmReloadId = null;
     if (!state.coloringBookOpen && FP.pagePicker.isOpen()) {
       // The bookshelf just closed — close the picker too (the picker is a
       // child surface of the bookshelf and can't outlive it).
       FP.pagePicker.close();
     }
     if (state.coloringBookOpen) {
+      // Autosave current state so picker thumbnails reflect what's on canvas.
+      autosaveCurrentColoringPage();
       // Pages for the saved book are reactive — pull the latest before opening.
       _refreshSavedBookPagesIfActive();
       _clampBookshelfScroll();
@@ -1401,29 +1292,25 @@
     state.currentBookId = bookId;
     state.coloringPages = pages;
     // NOTE: do NOT reset state.coloringScrollOffset — that's the BOOKSHELF
-    // scroll position (which book is visible), not the picker's scroll. The
-    // picker's grid-page scroll (Stage 3) is a separate variable that will
-    // reset on book switch.
-    state.coloringConfirmReloadId = null;
+    // scroll position (which book is visible), not the picker's grid-page
+    // scroll (those are separate variables; the picker resets its own
+    // offset on switch via open()).
     renderAll();
   }
 
-  async function handleColoringPageTap(page) {
-    // Saved-drawing entry (when viewing the synthetic saved book) — delegate
-    // to the existing load/delete flow so behavior matches the saved-drawings
-    // strip exactly.
+  // Called from the picker when the user taps a tile (the picker already
+  // short-circuits same-tile taps so we know `page` is something new). The
+  // `bgColorOverride` is the picker's preview color (Stage 4): if set, it
+  // replaces the saved bgColor at load time. For coloring pages, the
+  // override is also written back to the page's autosave so the next reload
+  // remembers it.
+  async function handleColoringPageTap(page, bgColorOverride) {
     if (page.isSavedDrawing) {
-      await handleThumbTap(page.entry);
+      await handleThumbTap(page.entry, bgColorOverride);
       return;
     }
-
-    // Blank canvas entry — load plain white canvas instead
     if (page.isBlank) {
-      if (state.currentColoringPageId === page.id) {
-        // Already on blank canvas, nothing to do
-        return;
-      }
-      // Coming from a coloring page or drawing: warn on unsaved changes
+      // Coming from a coloring page or drawing: autosave or prompt.
       if (state.currentColoringPageId) {
         autosaveCurrentColoringPage();
       } else if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
@@ -1431,54 +1318,25 @@
         if (choice === 'cancel' || choice == null) return;
         if (choice === 'save') doSave();
       }
-      await loadBlankCanvas();
-      return;
-    }
-
-    // A different slot was tapped → cancel any pending reload-confirm.
-    if (state.coloringConfirmReloadId && state.coloringConfirmReloadId !== page.id) {
-      state.coloringConfirmReloadId = null;
-    }
-    if (state.currentColoringPageId === page.id) {
-      // Second tap on the loaded page → arm the reload confirm.
-      state.coloringConfirmReloadId = page.id;
-      renderAll();
+      await loadBlankCanvas(bgColorOverride);
       return;
     }
     if (state.currentColoringPageId) {
       // Switching coloring pages — autosave the outgoing one silently.
       autosaveCurrentColoringPage();
-      await loadColoringPage(page);
+      await loadColoringPage(page, bgColorOverride);
       return;
     }
-    // Coming from a non-coloring drawing: warn on unsaved changes (matches
-    // the saved-thumb flow), unless caller is in clearOnly mode where saving
-    // isn't an option.
+    // Coming from a non-coloring drawing: warn on unsaved changes.
     if (!CFG.clearOnly && canvasComp.dirtySinceLoad) {
       const choice = await FP.dialogs.loadWithDirty();
       if (choice === 'cancel' || choice == null) return;
       if (choice === 'save') doSave();
     }
-    await loadColoringPage(page);
+    await loadColoringPage(page, bgColorOverride);
   }
 
-  async function handleColoringPageReloadConfirm(page) {
-    state.coloringConfirmReloadId = null;
-    FP.coloringBook.removeAutosave(page.id);
-    await canvasComp.pageFlip(async () => {
-      const [img, overlayImg] = await Promise.all([
-        FP.coloringBook.loadImage(page),
-        FP.coloringBook.loadOverlay(page),
-      ]);
-      canvasComp.setColoringPage(img, overlayImg, '#ffffff');
-      canvasComp.clearDrawing();
-    }, PAGE_FLIP_ANIMATION, () => {
-      renderAll();
-    });
-    FP.playSound('deleteDrawing');
-  }
-
-  async function loadColoringPage(page) {
+  async function loadColoringPage(page, bgColorOverride) {
     const autosave = FP.coloringBook.getAutosave(page.id);
     // Load the page image (and overlay companion, if present)
     const [img, overlayImg] = await Promise.all([
@@ -1487,53 +1345,56 @@
     ]);
     const imgH = Math.round(img.naturalHeight / img.naturalWidth * 1000);  // PAINTING_W = 1000
 
+    // Bg color precedence: explicit override (preview) > autosave > white.
+    const bgColor = bgColorOverride
+      || (autosave && autosave.bgColor)
+      || '#ffffff';
+
     await canvasComp.pageFlip(async () => {
-      if (autosave && autosave.bgColor) {
-        // New layered format: rebuild outline+overlay from page image, apply saved bg + draw.
-        canvasComp.setColoringPage(img, overlayImg, autosave.bgColor);
+      canvasComp.setColoringPage(img, overlayImg, bgColor);
+      if (autosave && autosave.draw) {
         await canvasComp.setDrawingFromDataUrl(autosave.draw);
-      } else if (autosave && autosave.bg) {
-        // Legacy: bg was flattened (page outline baked into bg). Use loadLayersFromDataUrls
-        // which wipes our new outline/overlay layers and shows the baked composite.
-        await canvasComp.loadLayersFromDataUrls(autosave.bg, autosave.draw);
       } else {
-        // Fresh load: clean four-layer setup with default white bg.
-        canvasComp.setColoringPage(img, overlayImg, '#ffffff');
         canvasComp.clearDrawing();
       }
       // Set page dimensions for aspect-ratio-aware scaling (even for autosaves)
       canvasComp.setPageDimensions(1000, imgH);
 
       state.currentColoringPageId   = page.id;
-      state.coloringConfirmReloadId = null;
       state.loadedDrawingId         = null;
       state.loadedDrawingEntry      = null;
       state.savedJustNow            = false;
       enableBtn('save');
 
-      // Automatically switch to frame view when loading a coloring page
+      // Coloring pages always load in framed view (regardless of mode) —
+      // the framing matches the page's aspect ratio.
       state.frameMode = true;
     }, PAGE_FLIP_ANIMATION, () => {
       // After page loaded, update rect during animation (before flip-in starts)
       renderAll();
     });
+
+    // If the user previewed a different bg color, persist it into the
+    // autosave so the next reload of this page remembers it.
+    if (bgColorOverride) autosaveCurrentColoringPage();
   }
 
-  async function loadBlankCanvas() {
+  async function loadBlankCanvas(bgColorOverride) {
+    const bgColor = bgColorOverride || '#ffffff';
     await canvasComp.pageFlip(async () => {
-      // reset() clears all four layers (bg → white, outline + overlay wiped,
-      // strokes wiped) and clears page dimensions in one call. We need the
+      // reset() clears all four layers and page dimensions. We need the
       // full four-layer cleanup here because the user may be transitioning
       // *from* a coloring page whose outline/overlay would otherwise leak.
       canvasComp.reset();
-      state.currentColoringPageId   = '__blank-white';  // Mark as blank canvas mode
-      state.coloringConfirmReloadId = null;
-      state.loadedDrawingId         = null;
-      state.loadedDrawingEntry      = null;
-      state.savedJustNow            = false;
+      if (bgColor !== '#ffffff') canvasComp.fillBackground(bgColor);
+      state.currentColoringPageId = '__blank-white';
+      state.loadedDrawingId       = null;
+      state.loadedDrawingEntry    = null;
+      state.savedJustNow          = false;
       enableBtn('save');
-      // Automatically switch to frame view
-      state.frameMode = true;
+      // Blank canvas loads in full view (canvas fills the available area).
+      // frameMode unified per Stage 4 — only coloring pages go framed.
+      state.frameMode = false;
     }, PAGE_FLIP_ANIMATION, () => {
       renderAll();
     });
@@ -1548,7 +1409,9 @@
       FP.coloringBook.setAutosave(state.currentColoringPageId, {
         bgColor: canvasComp.getBgColor(),
         draw:    canvasComp.toStrokesOnlyDataURL(),
-        thumb:   canvasComp.toThumbnailDataURL(),
+        // Transparent thumb (outline + draw + overlay, no bg fill) so the
+        // page picker's 3-layer compositing can swap bg under preview color.
+        thumb:   canvasComp.toTransparentThumbnailDataURL(),
         name:    page ? page.name : state.currentColoringPageId,
       });
     } catch (e) {
@@ -1561,7 +1424,6 @@
     if (!state.currentColoringPageId) return;
     autosaveCurrentColoringPage();
     state.currentColoringPageId   = null;
-    state.coloringConfirmReloadId = null;
     // Clear page dimensions when leaving coloring page
     canvasComp.setPageDimensions(null, null);
   }

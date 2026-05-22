@@ -85,10 +85,14 @@ FP.pagePicker = (function () {
   }
 
   /**
-   * Render the backdrop + grid into the DOM. Called by app.js renderAll()
-   * AFTER it clears its panelLayer / buttonLayer. The picker manages its
-   * own root element; we tear it down and rebuild each frame to stay
-   * consistent with the rest of the app's render model.
+   * Render the picker into the DOM. Called by app.js renderAll() AFTER it
+   * clears its buttonLayer.
+   *
+   * The PICKER ROOT (backdrop + panel) is kept across renders once the
+   * picker is open, so the CSS fade-in animation only fires on the very
+   * first render after open() — not on every button tap. Only the inner
+   * GRID is rebuilt each render (since tile state changes when preview
+   * color changes, when the active tile changes, etc.).
    *
    * @param {HTMLElement} appRoot   the #app element
    * @param {Object} layout         the layout from FP.computeLayout
@@ -96,29 +100,63 @@ FP.pagePicker = (function () {
    *                                for the saved book; coloring books pass their pages)
    */
   function render(appRoot, layout, pages) {
-    // Always remove any prior root — even if not open — to avoid stale DOM.
-    if (_rootEl && _rootEl.parentNode) _rootEl.parentNode.removeChild(_rootEl);
-    _rootEl = null;
-    if (!_open) return;
+    if (!_open) {
+      // Picker closed — tear down everything.
+      if (_rootEl && _rootEl.parentNode) _rootEl.parentNode.removeChild(_rootEl);
+      _rootEl = null;
+      return;
+    }
 
-    _rootEl = document.createElement('div');
-    _rootEl.className = 'page-picker';
-    appRoot.appendChild(_rootEl);
+    // First render after open: build the persistent root (backdrop + panel).
+    if (!_rootEl || !_rootEl.isConnected) {
+      _rootEl = document.createElement('div');
+      _rootEl.className = 'page-picker';
 
-    // Backdrop: catches pointerdown to close-on-empty-space.
-    const backdrop = document.createElement('div');
-    backdrop.className = 'page-picker-backdrop';
-    backdrop.addEventListener('pointerdown', (e) => {
-      // Only close if the tap landed on the backdrop itself (not a tile).
-      if (e.target === backdrop) {
-        e.preventDefault();
-        e.stopPropagation();
-        closeWithoutSelection();
-      }
-    });
-    _rootEl.appendChild(backdrop);
+      const backdrop = document.createElement('div');
+      backdrop.className = 'page-picker-backdrop';
+      backdrop.addEventListener('pointerdown', (e) => {
+        // Only close if the tap landed on the backdrop itself (not a tile,
+        // not the panel — the panel is the next child up and is purely
+        // decorative; its pointerdown also bubbles here).
+        if (e.target === backdrop) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeWithoutSelection();
+        }
+      });
+      _rootEl.appendChild(backdrop);
 
-    // Grid: fills layout.canvas with B × B tiles.
+      // Decorative panel around the grid (Stage 4 polish: visually
+      // distinguishes the picker area from the bookshelf below).
+      const panel = document.createElement('div');
+      panel.className = 'page-picker-panel';
+      _rootEl.appendChild(panel);
+
+      appRoot.appendChild(_rootEl);
+    }
+
+    // Position the panel to wrap the grid with G/2 padding. Use exact slot
+    // positions (pickerSlotXY) so panel edges line up with the tile grid
+    // without float drift from pickerGridRect's width/height arithmetic.
+    const panel = _rootEl.querySelector('.page-picker-panel');
+    if (panel) {
+      const B = layout.B;
+      const halfG = layout.G / 2;
+      const first = layout.pickerSlotXY(0, 0);
+      const last  = layout.pickerSlotXY(
+        layout.pickerGridCols - 1,
+        layout.pickerGridRows - 1);
+      Object.assign(panel.style, {
+        left:   (first.x - halfG) + 'px',
+        top:    (first.y - halfG) + 'px',
+        width:  (last.x + B + halfG - (first.x - halfG)) + 'px',
+        height: (last.y + B + halfG - (first.y - halfG)) + 'px',
+      });
+    }
+
+    // Replace the grid every render — tile state may have changed.
+    const oldGrid = _rootEl.querySelector('.page-picker-grid');
+    if (oldGrid) oldGrid.remove();
     const grid = _buildGrid(layout, pages);
     _rootEl.appendChild(grid);
   }
@@ -137,22 +175,15 @@ FP.pagePicker = (function () {
   function _buildGrid(layout, pages) {
     const grid = document.createElement('div');
     grid.className = 'page-picker-grid';
-    // pickerGridRect is aligned with the button grid (rowY/colX) so tiles
-    // line up with the color column / tool column / bookshelf row. It
-    // explicitly EXCLUDES the bookshelf row so the bookshelf stays
-    // accessible underneath the picker.
-    const c = layout.pickerGridRect || layout.canvas;
-    Object.assign(grid.style, {
-      left:   c.left   + 'px',
-      top:    c.top    + 'px',
-      width:  c.width  + 'px',
-      height: c.height + 'px',
-    });
+    // The grid is a wrapper for stacking-order purposes. Tile positions
+    // come straight from layout.pickerSlotXY (absolute window coords) so
+    // they share the SAME coordinate space as the rest of the button grid
+    // — no float drift from compounding (col * (B + G)) locally.
+    Object.assign(grid.style, { left: '0', top: '0', width: '100%', height: '100%' });
 
-    const G = layout.G;
     const B = layout.B;
-    const cols = Math.max(1, Math.floor((c.width  + G) / (B + G)));
-    const rows = Math.max(1, Math.floor((c.height + G) / (B + G)));
+    const cols = layout.pickerGridCols;
+    const rows = layout.pickerGridRows;
     const perGridPage = cols * rows;
     const totalGridPages = Math.max(1, Math.ceil(pages.length / perGridPage));
     if (_scrollOffset >= totalGridPages) _scrollOffset = totalGridPages - 1;
@@ -167,8 +198,7 @@ FP.pagePicker = (function () {
       const j = i - start;
       const row = Math.floor(j / cols);
       const col = j % cols;
-      const x = col * (B + G);
-      const y = row * (B + G);
+      const { x, y } = layout.pickerSlotXY(col, row);
       const tile = _buildTile(page, x, y, B, loadedId, isCrayon);
       grid.appendChild(tile);
     }
@@ -196,22 +226,38 @@ FP.pagePicker = (function () {
       _hooks.onTileTap(page);
     });
 
-    // Tile content — see comment block at top of file for the layered model.
-    // Stage 3 keeps this simple: use the entry's existing thumb directly.
-    // Stage 4 will split this into 3 layers (saved bg, preview overlay,
-    // transparent content) to support the color-swatch preview.
+    // 3-layer tile model:
+    //   Layer 1 (CSS background-color): preview color if set, else the
+    //     saved/autosaved bgColor. Blank tile defaults to white.
+    //   Layer 3 (transparent <img>): content thumbnail with no bg baked
+    //     in — saved drawing strokes, or coloring-page outline+strokes,
+    //     or empty for the blank-page tile.
+    let bgColor;
     if (page.isBlank) {
-      // Blank-page tile: just a white square. .btn already has white bg.
-      // Nothing to append.
+      bgColor = '#ffffff';
+    } else if (page.isSavedDrawing) {
+      bgColor = (page.entry && page.entry.bgColor) || '#ffffff';
+    } else {
+      const autosave = FP.coloringBook.getAutosave(page.id);
+      bgColor = (autosave && autosave.bgColor) || '#ffffff';
+    }
+    if (_previewBgColor) bgColor = _previewBgColor;
+    btn.style.backgroundColor = bgColor;
+
+    if (page.isBlank) {
+      // Bg color is the entire tile.
     } else if (page.isSavedDrawing) {
       const entry = page.entry;
-      const img = document.createElement('img');
-      img.src = entry.thumb || entry.png;
-      img.alt = '';
-      btn.appendChild(img);
+      const src = entry.thumb || entry.png;     // v1 fallback (png is opaque)
+      if (src) {
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = '';
+        btn.appendChild(img);
+      }
     } else {
-      // Coloring page — prefer autosaved thumb (shows user's painted state)
-      // else generate a smooth thumb from the page image.
+      // Coloring page — autosaved thumb (now transparent post-Stage 4) if any,
+      // else generate transparent outline thumb from the page image.
       const autosave = FP.coloringBook.getAutosave(page.id);
       if (autosave && autosave.thumb) {
         const img = document.createElement('img');
@@ -220,7 +266,7 @@ FP.pagePicker = (function () {
         btn.appendChild(img);
       } else {
         FP.coloringBook.loadImage(page).then((image) => {
-          const dataUrl = FP.PaintingCanvas.generateThumbnailFromImage(image, 160);
+          const dataUrl = FP.PaintingCanvas.generateTransparentThumbnailFromImage(image, 160);
           const img = document.createElement('img');
           img.src = dataUrl;
           img.alt = '';
@@ -262,11 +308,7 @@ FP.pagePicker = (function () {
   /** Total grid-page count for the current book (used by chrome for X/Y indicator). */
   function getGridPageCount(layout, pages) {
     if (!pages || pages.length === 0) return 1;
-    const G = layout.G, B = layout.B;
-    const c = layout.pickerGridRect || layout.canvas;
-    const cols = Math.max(1, Math.floor((c.width  + G) / (B + G)));
-    const rows = Math.max(1, Math.floor((c.height + G) / (B + G)));
-    const perGridPage = cols * rows;
+    const perGridPage = layout.pickerGridCols * layout.pickerGridRows;
     return Math.max(1, Math.ceil(pages.length / perGridPage));
   }
 

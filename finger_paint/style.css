@@ -140,8 +140,7 @@ html, body {
   border: 2px solid rgba(0,0,0,0.5);
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.3),
-              inset 0 0 0 1px rgba(255,255,255,0.35);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -230,21 +229,6 @@ body.dialog-open .btn {
   pointer-events: none;
 }
 
-/* ── Translucent panel backgrounds ── */
-.panel-bg {
-  position: absolute;
-  background: rgba(242,240,235,0.85);
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* ── Canvas frame background (grey fill in margins when coloring page loaded) ── */
-.canvas-frame-bg-fill {
-  position: absolute;
-  background: rgba(242,240,235,0.85);
-  pointer-events: none;
-  z-index: 0;
-}
 
 /* ── Canvas border (frame around drawing area, on top) ── */
 .canvas-frame-bg {
@@ -261,12 +245,27 @@ body.dialog-open .btn {
 .page-picker-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.35);
-  z-index: 3;        /* over canvas + border (z 2), under regular .btn (z 4) so the
-                        color palette, Save, Bookshelf-toggle, and Clear stay
-                        interactive above the shadow */
+  background: #9E9D99;     /* opaque "lightbox" — matches the apparent color
+                              the translucent overlay used to produce over the
+                              panel backgrounds, but now stable so it doesn't
+                              shift when panel bgs are removed */
+  z-index: 3;              /* over canvas + border (z 2), under regular .btn
+                              (z 4) so the color palette, Save, Bookshelf-
+                              toggle, and Clear stay interactive above it */
   pointer-events: auto;
   animation: fadeIn 140ms ease-out;
+}
+
+/* Decorative frame around the picker grid. Sits BETWEEN the lightbox (z 3)
+   and the picker tiles + chrome (z 5) so the tiles read as a distinct
+   surface separate from the bookshelf row below. */
+.page-picker-panel {
+  position: absolute;
+  z-index: 4;
+  background: rgba(242,240,235,0.85);
+  outline: 1px solid rgba(0,0,0,0.1);
+  border-radius: 12px;
+  pointer-events: none;
 }
 
 /* Picker tiles + contextual chrome (prev/indicator/next) sit ABOVE the regular

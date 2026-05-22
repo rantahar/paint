@@ -11,7 +11,7 @@
    Backing canvas width is always PAINTING_W (1000 units). Height
    (_paintingH) starts at 1000 and expands to fill the visible area
    on each setRect() call. It never shrinks on resize — only on
-   explicit load operations (loadCompositeFromDataUrl, setBackgroundImage).
+   explicit load operations (loadLayersFromColorAndDraw, setColoringPage).
 
    Coordinate mapping: pointer client coords → painting units via
    isotropic scale (PAINTING_W / cssWidth), same scale for both axes.
@@ -86,7 +86,11 @@ FP.PaintingCanvas = class {
     // Initial white paper
     this._currentBgColor = '#ffffff';
     this._fillBg(this._currentBgColor);
-    this.wrapEl.style.background = this._currentBgColor;
+    // Wrap stays TRANSPARENT — the page bg color is painted onto bgCanvas
+    // inside the painting element only, so it never extends past the page's
+    // bounds. The body background (#f5f3ee) shows through the wrap's margin
+    // around the page.
+    this.wrapEl.style.background = 'transparent';
 
     // State
     this.activeStrokes = new Map();   // pointerId → { brush, state, opts }
@@ -102,11 +106,6 @@ FP.PaintingCanvas = class {
     this._maxPaintingH = null;        // max height for canvas expansion when a page is loaded
 
     // Visual frame: grey background fill (indicates constrained drawing area when coloring page loaded)
-    this._frameBgFillEl = document.createElement('div');
-    this._frameBgFillEl.className = 'canvas-frame-bg-fill';
-    this.wrapEl.insertBefore(this._frameBgFillEl, this.paintingEl);
-    this._frameBgFillEl.style.display = 'none';
-
     // Visual frame: border (always shown to frame the drawing area)
     this._frameBgEl = document.createElement('div');
     this._frameBgEl.className = 'canvas-frame-bg';
@@ -202,23 +201,15 @@ FP.PaintingCanvas = class {
     this.drawCanvas.style.height    = cssH + 'px';
     this.overlayCanvas.style.height = cssH + 'px';
 
-    // Update grey background fill (visible only when a coloring page is loaded)
-    if (hasColoringPage) {
-      this._frameBgFillEl.style.display = 'block';
-      this._frameBgFillEl.style.left     = '0px';
-      this._frameBgFillEl.style.top      = '0px';
-      this._frameBgFillEl.style.width    = width  + 'px';
-      this._frameBgFillEl.style.height   = height + 'px';
-    } else {
-      this._frameBgFillEl.style.display = 'none';
-    }
-
-    // Update canvas border (always shown to frame the drawing area)
+    // Canvas border hugs the PAINTING element (the actual drawing area),
+    // not the outer wrap. For coloring pages in framed mode, this means
+    // the border traces the page itself — the dead margins around it
+    // (where no drawing happens) are not visually highlighted.
     this._frameBgEl.style.display = 'block';
-    this._frameBgEl.style.left     = '0px';
-    this._frameBgEl.style.top      = '0px';
-    this._frameBgEl.style.width    = width  + 'px';
-    this._frameBgEl.style.height   = height + 'px';
+    this._frameBgEl.style.left   = paintingElLeft + 'px';
+    this._frameBgEl.style.top    = paintingElTop  + 'px';
+    this._frameBgEl.style.width  = canvasWidth    + 'px';
+    this._frameBgEl.style.height = canvasHeight   + 'px';
   }
 
   // ── Tool state ──────────────────────────────────────────────
@@ -240,7 +231,6 @@ FP.PaintingCanvas = class {
       this.setPageDimensions(null, null);  // clear page dimensions
     }
     this._fillBg(color);
-    this.wrapEl.style.background = color;
   }
 
   getBgColor() { return this._currentBgColor; }
@@ -283,9 +273,8 @@ FP.PaintingCanvas = class {
       this._overlayBitmap = null;          // null → derive from outline at OVERLAY_OPACITY
     }
     this._blitOverlay();
-
-    // Wrap background tracks solid bg (margin reads as a continuation of bg color).
-    this.wrapEl.style.background = bgColor;
+    // Wrap stays transparent — see constructor; the page bg color lives only
+    // inside the painting element so it never extends past the page itself.
   }
 
   /** Legacy: bake an image into bgCanvas (used by uploaded-image and saved-drawing flows). */
@@ -309,12 +298,7 @@ FP.PaintingCanvas = class {
     this._overlayBitmap = null;
     this._blitOutline();
     this._blitOverlay();
-
-    try {
-      const sampleY = Math.min(imgH - 3, this._paintingH - 1);
-      const sample  = ctx.getImageData(2, sampleY, 1, 1).data;
-      this.wrapEl.style.background = `rgb(${sample[0]},${sample[1]},${sample[2]})`;
-    } catch (_) { /* tainted canvas — skip */ }
+    // Wrap bg unchanged — see constructor. The image lives on bgCanvas.
   }
 
   /**
@@ -372,11 +356,14 @@ FP.PaintingCanvas = class {
   }
 
   /**
-   * Two-layer load. Restores bg + draw to their original layers without
-   * flattening. `drawUrl` may be null/falsy for entries that have no
-   * strokes layer (e.g. v1 migrated entries).
+   * v3 saved-drawing load. Fills the bg with a solid color and applies the
+   * transparent draw layer on top. No outline/overlay (saved drawings don't
+   * carry coloring-page outlines — those were folded into the draw layer
+   * at save time per toDrawingDataURL).
+   *
+   * `drawUrl` may be null/falsy (bg-only entry).
    */
-  loadLayersFromDataUrls(bgUrl, drawUrl) {
+  loadLayersFromColorAndDraw(bgColor, drawUrl) {
     const loadOne = (src) => new Promise((resolve, reject) => {
       if (!src) { resolve(null); return; }
       const im = new Image();
@@ -384,88 +371,32 @@ FP.PaintingCanvas = class {
       im.onerror = reject;
       im.src = src;
     });
-    return Promise.all([loadOne(bgUrl), loadOne(drawUrl)]).then(([bgImg, drawImg]) => {
-      if (!bgImg) {
-        // Nothing to load — leave canvas alone.
-        return;
-      }
-      const bgH    = Math.round(bgImg.naturalHeight / bgImg.naturalWidth * PAINTING_W);
+    return loadOne(drawUrl).then((drawImg) => {
       const drawH  = drawImg
         ? Math.round(drawImg.naturalHeight / drawImg.naturalWidth * PAINTING_W)
         : 0;
-      const targetH = Math.max(bgH, drawH);
-      this._bgImageH = bgH;
-      this.setPageDimensions(null, null);  // clear page dimensions for saved entries
+      const targetH = Math.max(drawH, PAINTING_W);
+      this._bgImageH = 0;
+      this._currentBgColor = bgColor;
+      this.setPageDimensions(null, null);
       this._resizeCanvas(targetH);
 
-      // Background layer
-      this.bgCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
-      this.bgCtx.drawImage(bgImg, 0, 0, PAINTING_W, bgH);
-      if (this._paintingH > bgH) {
-        this.bgCtx.save();
-        this.bgCtx.fillStyle = '#ffffff';
-        this.bgCtx.fillRect(0, bgH, PAINTING_W, this._paintingH - bgH);
-        this.bgCtx.restore();
-      }
+      // Bg: solid fill.
+      this._fillBg(bgColor);
 
-      // Saved-drawing entries do not use the outline/overlay layers.
+      // Outline/overlay: empty for saved drawings.
       this._outlineBitmap = null;
       this._overlayBitmap = null;
       this._blitOutline();
       this._blitOverlay();
 
-      // Drawing layer
+      // Drawing layer: load transparent strokes on top.
       this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
       if (drawImg) {
         this.drawCtx.drawImage(drawImg, 0, 0, PAINTING_W, drawH);
       }
-
-      try {
-        const sample = this.bgCtx.getImageData(2, 2, 1, 1).data;
-        this.wrapEl.style.background = `rgb(${sample[0]},${sample[1]},${sample[2]})`;
-      } catch (_) { /* tainted canvas — skip */ }
-
+      // Wrap bg unchanged — see constructor. bg color lives on bgCanvas only.
       this._setDirty(false);
-    });
-  }
-
-  /** Replaces both layers — drawing wiped, image becomes background. */
-  loadCompositeFromDataUrl(dataUrl) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        // Scale to PAINTING_W wide, maintain aspect ratio
-        const scaledH = Math.round(img.naturalHeight / img.naturalWidth * PAINTING_W);
-        this._bgImageH = scaledH;
-        this.setPageDimensions(null, null);  // clear page dimensions for saved entries
-        this._resizeCanvas(scaledH);
-
-        this.bgCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
-        this.bgCtx.drawImage(img, 0, 0, PAINTING_W, scaledH);
-        // If canvas is taller than loaded image (visible area > image), fill remainder
-        if (this._paintingH > scaledH) {
-          this.bgCtx.save();
-          this.bgCtx.fillStyle = '#ffffff';
-          this.bgCtx.fillRect(0, scaledH, PAINTING_W, this._paintingH - scaledH);
-          this.bgCtx.restore();
-        }
-        // Composite load: no separately-layered outline/overlay.
-        this._outlineBitmap = null;
-        this._overlayBitmap = null;
-        this._blitOutline();
-        this._blitOverlay();
-        this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
-
-        try {
-          const sample = this.bgCtx.getImageData(2, 2, 1, 1).data;
-          this.wrapEl.style.background = `rgb(${sample[0]},${sample[1]},${sample[2]})`;
-        } catch (_) { /* tainted canvas — skip */ }
-
-        this._setDirty(false);
-        resolve();
-      };
-      img.onerror = reject;
-      img.src = dataUrl;
     });
   }
 
@@ -498,7 +429,7 @@ FP.PaintingCanvas = class {
     this._bgImageH = 0;
     this.setPageDimensions(null, null);  // clear page dimensions
     this._fillBg('#ffffff');
-    this.wrapEl.style.background = '#ffffff';
+    // Wrap bg stays transparent (set once in constructor).
     this._outlineBitmap = null;
     this._overlayBitmap = null;
     this._blitOutline();
@@ -563,6 +494,44 @@ FP.PaintingCanvas = class {
     ox.drawImage(this.outlineCanvas, 0, 0);
     ox.drawImage(this.drawCanvas,    0, 0);
     ox.drawImage(this.overlayCanvas, 0, 0);
+    return out.toDataURL('image/png');
+  }
+
+  /**
+   * Transparent thumbnail — no bg fill. Used by the page picker's 3-layer
+   * compositing (Layer 1 = bgColor or preview color; Layer 3 = this image).
+   *
+   * For coloring pages: composites outline + draw + overlay (no solid bg).
+   * For non-coloring states (blank canvas or saved drawings): just the draw
+   * layer (the outline/overlay canvases are empty in that state).
+   */
+  toTransparentThumbnailDataURL(size = 160) {
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    const ox = out.getContext('2d');
+
+    if (this._pageWidth !== null && this._pageHeight !== null) {
+      const pageAspectRatio = this._pageWidth / this._pageHeight;
+      const srcW = PAINTING_W;
+      const srcH = this._pageHeight;
+      let destX, destY, destW, destH;
+      if (pageAspectRatio >= 1) {
+        destH = size;
+        destW = Math.round(size * pageAspectRatio);
+        destY = 0;
+        destX = (size - destW) / 2;
+      } else {
+        destW = size;
+        destH = Math.round(size / pageAspectRatio);
+        destX = 0;
+        destY = (size - destH) / 2;
+      }
+      ox.drawImage(this.outlineCanvas, 0, 0, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.drawCanvas,    0, 0, srcW, srcH, destX, destY, destW, destH);
+      ox.drawImage(this.overlayCanvas, 0, 0, srcW, srcH, destX, destY, destW, destH);
+    } else {
+      ox.drawImage(this.drawCanvas, 0, 0, PAINTING_W, PAINTING_W, 0, 0, size, size);
+    }
     return out.toDataURL('image/png');
   }
 
@@ -901,6 +870,58 @@ FP.PaintingCanvas = class {
     }
 
     ox.drawImage(image, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+    return out.toDataURL('image/png');
+  }
+
+  /**
+   * Static helper: transparent thumbnail from a coloring-page image. Applies
+   * the same luma→alpha + RGB→black processing as _processOutlineImage, then
+   * scales to the target size with aspect-ratio-aware center alignment. Used
+   * by the page picker's Layer 3 when no autosave thumb exists yet.
+   * Idempotent on already-processed page PNGs.
+   */
+  static generateTransparentThumbnailFromImage(image, size = 160) {
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    const ox = out.getContext('2d');
+    const imgW = image.naturalWidth;
+    const imgH = image.naturalHeight;
+    const ar = imgW / imgH;
+    let srcX, srcY, srcW, srcH, destX, destY, destW, destH;
+    if (ar >= 1) {
+      srcH = imgH;
+      srcW = Math.round(srcH * ar);
+      srcY = 0;
+      srcX = Math.max(0, (srcW - imgW) / 2);
+      destH = size;
+      destW = Math.round(size * ar);
+      destY = (size - destH) / 2;
+      destX = (size - destW) / 2;
+    } else {
+      srcW = imgW;
+      srcH = Math.round(srcW / ar);
+      srcX = 0;
+      srcY = Math.max(0, (srcH - imgH) / 2);
+      destW = size;
+      destH = Math.round(size / ar);
+      destX = (size - destW) / 2;
+      destY = (size - destH) / 2;
+    }
+    ox.drawImage(image, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+    try {
+      const id = ox.getImageData(0, 0, size, size);
+      const d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        d[i]     = 0;
+        d[i + 1] = 0;
+        d[i + 2] = 0;
+        d[i + 3] = Math.round((255 - luma) * d[i + 3] / 255);
+      }
+      ox.putImageData(id, 0, 0);
+    } catch (_) {
+      // Tainted canvas — return as-is (still useful at lower fidelity).
+    }
     return out.toDataURL('image/png');
   }
 };

@@ -33,7 +33,6 @@
      canvas:   { left, top, width, height },
      colors:   [ { idx, x, y, color, kind } × 16 ]
      tools:    [ { id, x, y, kind } × 8 ]
-     panels:   [ { left, top, width, height, borders } ]
      // Persistent corner buttons (always rendered):
      saveXY:        { x, y }   // slot 0 of the strip line
      bookToggleXY:  { x, y }   // slot 1
@@ -108,9 +107,9 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
   const clearXY      = { x: colX(numCols - 1), y: stripY };
 
   // Canvas extends through the empty middle of the strip line. The corner
-  // buttons sit on the left/right column panels (which now extend full height)
-  // and stay above the canvas via z-index; the strip-line middle (cols 2..n-2)
-  // is empty unless the bookshelf overlay opens on top.
+  // buttons float in the side columns at z 4 (above the canvas at z 2); the
+  // strip-line middle (cols 2..n-2) is empty unless the bookshelf overlay
+  // opens on top.
   //
   // Top + bottom are flush with the frame edges, so we shrink the canvas by
   // CANVAS_EDGE_MARGIN px on each (plus an extra px at the bottom) so its 1px
@@ -122,37 +121,35 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
     height: frameH - 2 * CANVAS_EDGE_MARGIN - CANVAS_BOTTOM_EXTRA_LANDSCAPE,
   };
 
-  const panels = [
-    // Left color column (cols 0–1) — full height now (was bottom strip part).
-    { left: 0, top: 0,
-      width: colX(2), height: frameH,
-      borders: { right: true } },
-    // Right tool column (col numCols-1) — full height.
-    { left: colX(numCols - 1) - G, top: 0,
-      width: B + 2 * G,            height: frameH,
-      borders: { left: true } },
-  ];
-
   // Page-picker grid rect — where the picker tiles live when the picker is
   // open. Aligned with the button grid (rowY(0), colX(2)) so tiles line up
   // with the color column and tools column. Stops above the bookshelf row
   // (rowY(8) - G) so the bookshelf stays accessible underneath.
+  //
+  // pickerGridCols / pickerGridRows are exact INTEGER counts (not derived
+  // from width/(B+G) which drifts under float rounding). pickerSlotXY(col,
+  // row) returns the absolute pixel position for tile (col, row) using the
+  // layout's own colX/rowY — bypassing any float compounding the picker
+  // would otherwise do internally.
   const pickerGridRect = {
     left:   colX(2),
     top:    rowY(0),
     width:  colX(numCols - 1) - G - colX(2),
     height: rowY(8) - G - rowY(0),
   };
+  const pickerGridCols = numCols - 3;   // slots 2 .. numCols-2 inclusive
+  const pickerGridRows = 8;             // rows 0 .. 7 (above the strip line)
 
   return {
     orientation: 'landscape',
     G, B, frameW, frameH, numCols,
-    canvas, colors, tools, panels,
+    canvas, colors, tools,
     saveXY, bookToggleXY, clearXY,
     bookshelfSlotCount: numCols,
     bookshelfSlotXY(slot) { return { x: colX(slot), y: stripY }; },
     bookshelfRowRect: { left: 0, top: stripY, width: frameW, height: B },
-    pickerGridRect,
+    pickerGridRect, pickerGridCols, pickerGridRows,
+    pickerSlotXY(col, row) { return { x: colX(2 + col), y: rowY(row) }; },
   };
 }
 
@@ -191,8 +188,8 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
   const saveXY        = { x: stripX, y: neighborRowY  };  // slot 0 (bottom)
 
   // Canvas: top below the top tool row, bottom above the color rows. Extends
-  // horizontally to frameW (through col 8's empty middle); col 8's corners
-  // sit on the top/bottom panels.
+  // horizontally to frameW (through col 8's empty middle); col 8's corner
+  // buttons float at z 4 above the canvas.
   //
   // Left + right are flush with the frame edges, so we shrink the canvas by
   // CANVAS_EDGE_MARGIN px on each so its 1px border doesn't blend with the
@@ -205,37 +202,33 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
     height: primaryRowY - G - canvasTop,
   };
 
-  const panels = [
-    // Top toolbar (row 0)
-    { left: 0,                top: 0,
-      width: frameW,          height: rowY(0) + B + G,
-      borders: { bottom: true } },
-    // Bottom color rows
-    { left: 0,                top: primaryRowY - G,
-      width: frameW,          height: frameH - (primaryRowY - G),
-      borders: { top: true } },
-  ];
-
   // Page-picker grid rect — where picker tiles live when the picker is open.
   // Aligned with the button grid (rowY(1), colX(0)) so tiles line up with
   // the top tool row's first column. Stops left of the bookshelf column
   // (col 8 - G) so the bookshelf stays accessible alongside.
+  //
+  // pickerGridCols / pickerGridRows are exact INTEGER counts (see landscape
+  // comments). pickerSlotXY uses colX/rowY so positions match the rest of
+  // the button grid without float compounding.
   const pickerGridRect = {
     left:   colX(0),
     top:    rowY(1),
     width:  colX(8) - G - colX(0),
     height: primaryRowY - G - rowY(1),
   };
+  const pickerGridCols = 8;             // cols 0..7 (left of the bookshelf column)
+  const pickerGridRows = numRows - 3;   // rows 1 .. numRows-3 inclusive
 
   return {
     orientation: 'portrait',
     G, B, frameW, frameH, numRows,
-    canvas, colors, tools, panels,
+    canvas, colors, tools,
     saveXY, bookToggleXY, clearXY,
     bookshelfSlotCount: numRows,
     // slot 0 = bottom of strip → newer-to-older feels right
     bookshelfSlotXY(slot) { return { x: stripX, y: rowY(numRows - 1 - slot) }; },
     bookshelfRowRect: { left: stripX, top: 0, width: B, height: frameH },
-    pickerGridRect,
+    pickerGridRect, pickerGridCols, pickerGridRows,
+    pickerSlotXY(col, row) { return { x: colX(col), y: rowY(1 + row) }; },
   };
 }
