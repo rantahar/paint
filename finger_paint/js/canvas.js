@@ -592,6 +592,16 @@ FP.PaintingCanvas = class {
   }
 
   // ── Page-flip animation ─────────────────────────────────────
+  /** Cancel all active strokes immediately (for interrupt cases like clear mid-draw). */
+  _cancelActiveStrokes() {
+    for (const [pointerId, stroke] of this.activeStrokes) {
+      const pt = { x: 0, y: 0 };
+      stroke.brush.endStroke(this.drawCtx, stroke.state, pt, stroke.opts);
+      try { this.drawCanvas.releasePointerCapture(pointerId); } catch (_) {}
+    }
+    this.activeStrokes.clear();
+  }
+
   /** Runs `midActionFn` at the midpoint of a 2-stage CSS flip. */
   /**
    * Page transition animation. Supports multiple styles:
@@ -606,6 +616,7 @@ FP.PaintingCanvas = class {
    * @param {Function} postLoadFn - Called after page loaded, before flip-in animation (optional)
    */
   async pageFlip(midActionFn, style = 'flip', postLoadFn = null) {
+    this._cancelActiveStrokes();
     FP.playSound('pageTurn');
     const el = this.paintingEl;
 
