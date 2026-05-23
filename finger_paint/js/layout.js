@@ -121,10 +121,27 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
     height: frameH - 2 * CANVAS_EDGE_MARGIN - CANVAS_BOTTOM_EXTRA_LANDSCAPE,
   };
 
+  // Extended canvas (Crayon variant — tools column empty). Used for coloring
+  // pages where the page would otherwise be too small in `canvas`: extends
+  // right to the viewport edge (gaining width) but stops above the strip
+  // line (= 8 button rows + 7 gaps tall). app.js picks between `canvas` and
+  // `canvasExtended` per page aspect so a wide page gets the extra width
+  // without windowboxing a tall page.
+  const canvasExtended = (FP.toolOrder.length === 0)
+    ? {
+        left:   colX(2),
+        top:    CANVAS_EDGE_MARGIN,
+        width:  frameW - colX(2) - CANVAS_EDGE_MARGIN,
+        height: rowY(8) - G - CANVAS_EDGE_MARGIN,
+      }
+    : null;
+
   // Page-picker grid rect — where the picker tiles live when the picker is
   // open. Aligned with the button grid (rowY(0), colX(2)) so tiles line up
   // with the color column and tools column. Stops above the bookshelf row
-  // (rowY(8) - G) so the bookshelf stays accessible underneath.
+  // (rowY(8) - G) so the bookshelf stays accessible underneath, and stops
+  // LEFT of the tools column so the picker chrome (right-column middle row)
+  // stays visible regardless of variant.
   //
   // pickerGridCols / pickerGridRows are exact INTEGER counts (not derived
   // from width/(B+G) which drifts under float rounding). pickerSlotXY(col,
@@ -137,19 +154,29 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
     width:  colX(numCols - 1) - G - colX(2),
     height: rowY(8) - G - rowY(0),
   };
-  const pickerGridCols = numCols - 3;   // slots 2 .. numCols-2 inclusive
-  const pickerGridRows = 8;             // rows 0 .. 7 (above the strip line)
+  const pickerGridCols = numCols - 3;   // slots 2..numCols-2
+  const pickerGridRows = 8;             // rows 0..7 (above strip)
+
+  // Page-picker chrome (prev/indicator/next) lives at fixed slots independent
+  // of FP.toolOrder so that Crayon (toolOrder = []) still has somewhere to
+  // put them. Landscape: right column, rows 1/2/3. The Crayon single-button
+  // variant uses the middle (rowY(2)) only.
+  const chromeColX = colX(numCols - 1);
+  const pickerChromePrevXY = { x: chromeColX, y: rowY(1) };
+  const pickerChromeMidXY  = { x: chromeColX, y: rowY(2) };
+  const pickerChromeNextXY = { x: chromeColX, y: rowY(3) };
 
   return {
     orientation: 'landscape',
     G, B, frameW, frameH, numCols,
-    canvas, colors, tools,
+    canvas, canvasExtended, colors, tools,
     saveXY, bookToggleXY, clearXY,
     bookshelfSlotCount: numCols,
     bookshelfSlotXY(slot) { return { x: colX(slot), y: stripY }; },
     bookshelfRowRect: { left: 0, top: stripY, width: frameW, height: B },
     pickerGridRect, pickerGridCols, pickerGridRows,
     pickerSlotXY(col, row) { return { x: colX(2 + col), y: rowY(row) }; },
+    pickerChromePrevXY, pickerChromeMidXY, pickerChromeNextXY,
   };
 }
 
@@ -202,10 +229,27 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
     height: primaryRowY - G - canvasTop,
   };
 
+  // Extended canvas (Crayon variant — top tool row empty). Used for coloring
+  // pages where the page would otherwise be too narrow in `canvas`: extends
+  // up to the viewport edge (gaining height) but stops left of the bookshelf
+  // column. Width is bounded by "8 buttons" since Clear at col 8 row 0 must
+  // stay accessible. app.js picks per page aspect so a tall page gets the
+  // extra height without windowboxing a wide page.
+  const canvasExtended = (FP.toolOrder.length === 0)
+    ? {
+        left:   CANVAS_EDGE_MARGIN,
+        top:    CANVAS_EDGE_MARGIN,
+        width:  colX(8) - G - CANVAS_EDGE_MARGIN,
+        height: primaryRowY - G - CANVAS_EDGE_MARGIN,
+      }
+    : null;
+
   // Page-picker grid rect — where picker tiles live when the picker is open.
   // Aligned with the button grid (rowY(1), colX(0)) so tiles line up with
   // the top tool row's first column. Stops left of the bookshelf column
-  // (col 8 - G) so the bookshelf stays accessible alongside.
+  // (col 8 - G) so the bookshelf stays accessible alongside, and stops
+  // BELOW the top tool row so the picker chrome (top-middle) stays visible
+  // regardless of variant.
   //
   // pickerGridCols / pickerGridRows are exact INTEGER counts (see landscape
   // comments). pickerSlotXY uses colX/rowY so positions match the rest of
@@ -216,13 +260,20 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
     width:  colX(8) - G - colX(0),
     height: primaryRowY - G - rowY(1),
   };
-  const pickerGridCols = 8;             // cols 0..7 (left of the bookshelf column)
-  const pickerGridRows = numRows - 3;   // rows 1 .. numRows-3 inclusive
+  const pickerGridCols = 8;             // cols 0..7
+  const pickerGridRows = numRows - 3;   // rows 1..numRows-3
+
+  // Picker chrome positions (see landscape comments). Portrait: top row,
+  // cols 3/4/5 — Crayon's single button uses colX(4), top-middle.
+  const chromeRowY = rowY(0);
+  const pickerChromePrevXY = { x: colX(3), y: chromeRowY };
+  const pickerChromeMidXY  = { x: colX(4), y: chromeRowY };
+  const pickerChromeNextXY = { x: colX(5), y: chromeRowY };
 
   return {
     orientation: 'portrait',
     G, B, frameW, frameH, numRows,
-    canvas, colors, tools,
+    canvas, canvasExtended, colors, tools,
     saveXY, bookToggleXY, clearXY,
     bookshelfSlotCount: numRows,
     // slot 0 = bottom of strip → newer-to-older feels right
@@ -230,5 +281,6 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
     bookshelfRowRect: { left: stripX, top: 0, width: B, height: frameH },
     pickerGridRect, pickerGridCols, pickerGridRows,
     pickerSlotXY(col, row) { return { x: colX(col), y: rowY(1 + row) }; },
+    pickerChromePrevXY, pickerChromeMidXY, pickerChromeNextXY,
   };
 }

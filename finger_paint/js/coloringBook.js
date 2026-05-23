@@ -256,6 +256,36 @@ FP.coloringBook = {
   getSavedBookPages() { return _computeSavedBookPages(); },
 
   /**
+   * Resolve any picker page ID to its full page object, loading the
+   * containing book on demand. Used by Stage 6's resume-on-reload to
+   * rehydrate the page the user was last viewing. Returns null when the
+   * page no longer exists (e.g. a coloring book was removed since the
+   * autosave was written).
+   *
+   * ID forms:
+   *   '__blank-white'      → the blank-page tile.
+   *   'saved:<entryId>'    → a saved-drawing tile (live from FP.storage).
+   *   '<bookId>:<file>'    → a coloring-page tile from a manifest book.
+   */
+  async findPageById(pageId) {
+    if (!pageId) return null;
+    if (pageId === BLANK_PAGE_ID) return _blankPageTile();
+    if (pageId.startsWith('saved:')) {
+      const entryId = pageId.slice('saved:'.length);
+      const entry = FP.storage && FP.storage.get && FP.storage.get(entryId);
+      if (!entry) return null;
+      return { id: pageId, name: 'Saved drawing', isSavedDrawing: true, entry };
+    }
+    const colonIdx = pageId.indexOf(':');
+    if (colonIdx <= 0) return null;
+    const bookId = pageId.slice(0, colonIdx);
+    try {
+      const pages = await this.switchBook(bookId);
+      return pages.find(p => p.id === pageId) || null;
+    } catch (_) { return null; }
+  },
+
+  /**
    * Returns the resolved cover-image URL for the book (or a dataURL for the
    * synthetic saved book), following the chain:
    *   1. book.thumbnail (from manifest)

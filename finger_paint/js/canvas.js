@@ -99,6 +99,7 @@ FP.PaintingCanvas = class {
     this.size  = 12;                  // in painting units (1000-scale)
     this.dirtySinceLoad = false;      // true once a stroke touches; reset on save/clear/load
     this.onDirtyChange = null;        // callback for app to update Save↔Download button
+    this.onStrokeEnd   = null;        // callback fires when the last active stroke ends
 
     // Coloring page dimensions (aspect ratio aware scaling)
     this._pageWidth  = null;          // natural page width in painting units (or null if no page)
@@ -234,6 +235,8 @@ FP.PaintingCanvas = class {
   }
 
   getBgColor() { return this._currentBgColor; }
+  getPageWidth()  { return this._pageWidth; }
+  getPageHeight() { return this._pageHeight; }
 
   /**
    * Load a coloring page as a four-layer composition:
@@ -706,6 +709,14 @@ FP.PaintingCanvas = class {
     try { this.drawCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
     FP.playBrushSound(stroke.brush, 'touchEnd');
+
+    // Notify app.js that a stroke just completed — used to re-trigger the
+    // current-work autosave debounce so every finished stroke gets a write
+    // attempt (not just the first one in a session, which is the only one
+    // that flips dirtySinceLoad from false -> true).
+    if (this.activeStrokes.size === 0 && this.onStrokeEnd) {
+      this.onStrokeEnd();
+    }
   }
 
   // ── Helpers ─────────────────────────────────────────────────

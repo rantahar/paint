@@ -27,9 +27,11 @@
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
 
-const DB_NAME    = 'fingerPaint.drawings';
-const DB_VERSION = 1;
-const STORE      = 'drawings';
+const DB_NAME       = 'fingerPaint.drawings';
+const DB_VERSION    = 2;            // v2: adds `currentWork` store for Stage 6
+const STORE         = 'drawings';
+const CURRENT_STORE = 'currentWork';
+const CURRENT_ID    = '__current-work';   // sentinel keyPath for the single row
 
 let _db   = null;
 let _list = [];   // in-memory, most-recent-first
@@ -42,6 +44,12 @@ function _openDb() {
       if (!db.objectStoreNames.contains(STORE)) {
         const store = db.createObjectStore(STORE, { keyPath: 'id' });
         store.createIndex('t', 't', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(CURRENT_STORE)) {
+        // Single-row store keyed by '__current-work'. Holds the live canvas
+        // state mirror so the next page load resumes exactly where the user
+        // left off. See FP.storage.currentWork.{read,write,clear} below.
+        db.createObjectStore(CURRENT_STORE, { keyPath: 'id' });
       }
     };
     req.onsuccess = e => resolve(e.target.result);
@@ -128,6 +136,51 @@ FP.storage = {
     list.forEach((entry, i) => {
       setTimeout(() => this.downloadOne(entry), i * 200);
     });
+  },
+
+  // ── Current-work mirror (Stage 6: resume-on-reload) ──────────────
+  // A single hidden row that tracks the live canvas state. Written
+  // (debounced) by app.js on dirty / load / save / bookshelf-open;
+  // read once at boot to restore exactly where the user left off.
+  //
+  // Entry shape:
+  //   {
+  //     id: '__current-work', t: <epoch-ms>,
+  //     frameMode: <bool>,
+  //     currentColoringPageId: <string|null>,
+  //     loadedDrawingId:       <string|null>,
+  //     bgColor: <hex|null>,    // null for coloring-page state (per-page
+  //                                autosave has the content)
+  //     draw:    <dataURL|null>,
+  //     thumb:   <dataURL|null>,
+  //   }
+  currentWork: {
+    async read() {
+      if (!_db) return null;
+      return new Promise((resolve) => {
+        try {
+          const tx = _db.transaction(CURRENT_STORE, 'readonly');
+          const req = tx.objectStore(CURRENT_STORE).get(CURRENT_ID);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror   = () => resolve(null);
+        } catch (_) { resolve(null); }
+      });
+    },
+    write(entry) {
+      if (!_db) return;
+      const row = Object.assign({}, entry, { id: CURRENT_ID, t: Date.now() });
+      try {
+        _db.transaction(CURRENT_STORE, 'readwrite')
+           .objectStore(CURRENT_STORE).put(row);
+      } catch (_) { /* IDB write best-effort */ }
+    },
+    clear() {
+      if (!_db) return;
+      try {
+        _db.transaction(CURRENT_STORE, 'readwrite')
+           .objectStore(CURRENT_STORE).delete(CURRENT_ID);
+      } catch (_) { /* best-effort */ }
+    },
   },
 };
 

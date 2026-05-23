@@ -61,6 +61,7 @@
     coloringBooks:           [],              // discovered books (from FP.coloringBook.getBooks())
     coloringScrollOffset:    0,               // bookshelf overlay scroll position (in items)
     coloringPages:           [],              // pages of the currently-opened book (used by the page picker)
+    pageBgToggleActive:      false,           // Crayon-only: when true, color swatches are page-bg fan icons
   };
 
   // Expose state so canvas.js (and any other FP module) can read pointerDownOnButton
@@ -155,6 +156,12 @@
     appRoot.appendChild(paintingWrap);
     canvasComp = new FP.PaintingCanvas(paintingWrap);
     canvasComp.onDirtyChange = onDirtyChange;
+    // Re-trigger the current-work autosave debounce after every completed
+    // stroke. _setDirty only fires onDirtyChange on the false→true
+    // transition, so without this hook the debounce timer would only be
+    // armed by the FIRST stroke in a session — subsequent strokes would
+    // sit unsaved until the visibilitychange flush, racing the page kill.
+    canvasComp.onStrokeEnd = () => autosaveCurrentWork();
     canvasComp.setBrush(FP.brushes[state.activeBrushId]);
     canvasComp.setColor(state.palette[state.activeColorIdx]);
     canvasComp.setSize(SIZE_LEVELS[state.sizeIdx]);
@@ -187,7 +194,9 @@
 
     // Discover coloring books (always includes the synthetic saved book at
     // the front) and migrate any orphaned autosaves — autosaves whose source
-    // page is no longer in any coloring book's manifest.
+    // page is no longer in any coloring book's manifest. Once books are
+    // available, try to resume from the current-work autosave so the app
+    // boots back to wherever the user left off (Stage 6).
     FP.coloringBook.discover().then(async pages => {
       state.coloringPages = pages;
       state.coloringBooks = FP.coloringBook.getBooks();
@@ -198,6 +207,8 @@
       } catch (e) {
         console.warn('orphan-autosave migration skipped', e);
       }
+      try { await resumeCurrentWork(); }
+      catch (e) { console.warn('resume failed', e); }
       renderAll();
     }).catch(err => console.warn('coloringBook discover failed', err));
 
@@ -248,6 +259,21 @@
       if (raf) return;
       raf = requestAnimationFrame(() => { raf = null; renderAll(); });
     });
+
+    // Page-exit save: flush the current-work mirror synchronously when the
+    // tab becomes hidden or is being unloaded. This catches the case where
+    // the user paints something and then closes the tab before the dirty-
+    // change debounce timer fires. visibilitychange fires reliably on tab
+    // switch / minimize / close on every modern browser; pagehide is the
+    // backup for browsers that skip visibilitychange on full-tab close.
+    function _flushOnExit() {
+      try { autosaveCurrentWork({ immediate: true }); }
+      catch (_) { /* best-effort */ }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') _flushOnExit();
+    });
+    window.addEventListener('pagehide', _flushOnExit);
 
     // Wire bg upload input
     document.getElementById('bg-upload-input')
@@ -351,10 +377,13 @@
     const layout = FP.computeLayout(w, h, state.saved.length);
     lastLayout = layout;
 
-    // Canvas rect: framed view uses layout.canvas (which now extends through
-    // the empty strip-line middle in both modes — no more Crayon-specific
-    // override needed). Full view fills the window.
-    const canvasRect = state.frameMode ? layout.canvas : { left: 0, top: 0, width: w, height: h };
+    // Canvas rect: framed view uses layout.canvas, or layout.canvasExtended
+    // for coloring pages that would be unnecessarily windowboxed in the
+    // normal rect (Crayon variant only — see _selectCanvasRect). Full view
+    // fills the window.
+    const canvasRect = state.frameMode
+      ? _selectCanvasRect(layout)
+      : { left: 0, top: 0, width: w, height: h };
     canvasComp.setRect(canvasRect, state.frameMode);
 
     // Clear layers
@@ -371,19 +400,52 @@
     FP.pagePicker.render(appRoot, layout, state.coloringPages);
   }
 
+  // For framed mode: pick between the normal canvas rect and the extended
+  // rect (Crayon variant — when the tools area is empty). Use extended only
+  // when a coloring page is loaded AND the page would be "too small" in the
+  // normal rect (per user spec: vertically shorter than 8 buttons in
+  // landscape, horizontally shorter than 8 buttons in portrait).
+  function _selectCanvasRect(layout) {
+    const normal = layout.canvas;
+    const ext    = layout.canvasExtended;
+    if (!ext) return normal;
+    const pageW = canvasComp.getPageWidth();
+    const pageH = canvasComp.getPageHeight();
+    if (!pageW || !pageH) return normal;     // no coloring page loaded
+    const pageAR = pageW / pageH;
+    const eightButtons = layout.B * 8 + layout.G * 7;
+    if (layout.orientation === 'landscape') {
+      // Page is fit-to-width in normal: height = normal.width / pageAR.
+      // Switch to extended when that height is shorter than 8 buttons.
+      const heightInNormal = normal.width / pageAR;
+      return heightInNormal < eightButtons ? ext : normal;
+    } else {
+      // Page is fit-to-height in normal: width = normal.height * pageAR.
+      const widthInNormal = normal.height * pageAR;
+      return widthInNormal < eightButtons ? ext : normal;
+    }
+  }
+
   function renderColorSwatches(layout) {
-    // When the page picker is open, the color palette becomes the BG-COLOR
-    // picker for pages: each swatch slot renders a "fan of 3 papers" icon
-    // in that swatch's color over a neutral (canvas-bg) button. No active
-    // indicator (no border, no checkmark) — selection is shown by the
-    // tinting that gets applied to picker tiles (Stage 4).
-    if (FP.pagePicker.isOpen()) {
+    // The color palette renders in "page-bg picker" mode (fan-of-papers
+    // icons over a neutral button) whenever either:
+    //   (a) the page picker is open — taps set the picker's PREVIEW color
+    //       (composited as Layer 2 on each tile; applied on tile tap).
+    //   (b) Crayon's page-bg toggle is on — taps FILL the current page bg
+    //       immediately (the toggle stays on until tapped again).
+    // Otherwise, the regular paint-color swatches render.
+    const pickerOpen = FP.pagePicker.isOpen();
+    const bgMode    = pickerOpen || state.pageBgToggleActive;
+    if (bgMode) {
       layout.colors.forEach(s => {
         const color = state.palette[s.idx];
+        const onTap = pickerOpen
+          ? () => handleBgColorPickerTap(s.idx)
+          : () => handlePageBgDirectTap(s.idx);
         makeBtn({
           x: s.x, y: s.y, size: layout.B,
           bg: '#f5f3ee',              // matches #app background
-          onTap: () => handleBgColorPickerTap(s.idx),
+          onTap,
           innerHTML: FP.pageFanIcon(color, layout.B * 0.7),
           ariaLabel: `Page background color ${s.idx + 1}`,
         });
@@ -406,13 +468,37 @@
     });
   }
 
-  // Picker-only handler: tapping a bg-color icon stores the preview color
-  // on the picker. Stage 4 will composite this as Layer 2 on each tile and
-  // pass it as a bgColorOverride when a tile is tapped to load a page. For
-  // Stage 3 we just store it and re-render; the visual effect lands later.
+  // Picker-only handler: stores the preview color on the picker. Tile
+  // rendering re-tints (Layer 2); on tile tap the preview is passed as a
+  // bgColorOverride and applied at load time.
   function handleBgColorPickerTap(idx) {
     FP.pagePicker.setPreviewBgColor(state.palette[idx]);
     FP.playSound('colorPick', state.palette[idx]);
+    renderAll();
+  }
+
+  // Crayon page-bg toggle: flips swatches between paint mode and bg-color
+  // mode. Stays on until tapped again — the user can pick several colors
+  // in a row without re-entering the mode.
+  function handlePageBgToggleTap() {
+    state.pageBgToggleActive = !state.pageBgToggleActive;
+    FP.playSound('dialogOpen');
+    renderAll();
+  }
+
+  // Tap a fan swatch while the Crayon page-bg toggle is on — fills the
+  // current page bg with that color (same effect as the old bgFill tool,
+  // but with the user picking the color rather than using the active paint
+  // color). The toggle stays on so the user can try multiple colors.
+  function handlePageBgDirectTap(idx) {
+    const color = state.palette[idx];
+    const onColoringPage = !!state.currentColoringPageId
+      && state.currentColoringPageId !== '__blank-white';
+    if (!onColoringPage) _leavingColoringPage();
+    canvasComp.fillBackground(color);
+    if (onColoringPage) autosaveCurrentColoringPage();
+    else { onCanvasContentChanged(); autosaveCurrentWork({ immediate: true }); }
+    FP.playSound('bgFill');
     renderAll();
   }
 
@@ -469,9 +555,17 @@
 
     const pickerOpen = FP.pagePicker.isOpen();
 
-    // Slot 0: Save (skipped in Crayon — slot stays empty). When the picker
-    // is open, Save drops behind the backdrop (visually darkened) per the
-    // redesign — the bookshelf is the active surface.
+    // Slot 0: Save (non-Crayon) or page-bg toggle (Crayon).
+    //
+    // Non-Crayon: standard Save / Download button. Drops behind the picker
+    //   backdrop when the picker is open (the bookshelf is the active
+    //   surface; Save shouldn't fire while picking).
+    //
+    // Crayon: this slot replaces the old bgFill tool. Tapping toggles the
+    //   color swatches between paint mode and page-bg mode (fan-of-papers
+    //   icons that fill the page bg when tapped — same UX as the picker's
+    //   bg-color swatches). Hidden when the picker is open since the
+    //   picker provides its own bg-color selection.
     if (!isCrayon) {
       const showDl = state.savedJustNow && !state.isFullscreen;
       makeBtn({
@@ -482,6 +576,17 @@
         ariaLabel: showDl ? 'Download all' : 'Save drawing',
         disabled: state.disabledButtons.has('save'),
         extraClass: pickerOpen ? 'picker-below' : null,
+      });
+    } else if (!pickerOpen) {
+      makeBtn({
+        x: layout.saveXY.x, y: layout.saveXY.y, size: B,
+        accent: true,
+        active: state.pageBgToggleActive,
+        onTap: handlePageBgToggleTap,
+        innerHTML: FP.pageFanMulticolorIcon(B * 0.6),
+        ariaLabel: state.pageBgToggleActive
+          ? 'Exit page background mode'
+          : 'Choose a page background color',
       });
     }
 
@@ -818,6 +923,7 @@
       autosaveCurrentColoringPage();
     } else {
       onCanvasContentChanged();
+      autosaveCurrentWork();
     }
     renderAll();
     FP.playSound('bgFill');
@@ -831,12 +937,17 @@
       }, PAGE_FLIP_ANIMATION, () => {
         renderAll();
       });
+      // Plain-canvas Clear → wipe the current-work mirror so a reload boots
+      // fresh (not back into the cleared strokes).
+      clearCurrentWork();
       FP.playSound('deleteDrawing');
       return;
     }
     // On a coloring page: wipe strokes but preserve the chosen bg color,
     // outline, and overlay. (Stage 4: the old double-tap-to-reset path is
-    // gone — users can erase + bgFill to clean up.)
+    // gone — users can erase + bgFill to clean up.) The per-page autosave
+    // is updated to mirror the cleared state; current-work just tracks the
+    // pointer (which page we're on) so reload re-loads this page.
     if (state.currentColoringPageId) {
       await canvasComp.pageFlip(async () => {
         canvasComp.clearDrawing();
@@ -857,6 +968,9 @@
     }, PAGE_FLIP_ANIMATION, () => {
       renderAll();
     });
+    // Reached when we cleared a loaded saved drawing or a plain dirty
+    // canvas — either way the live state is now empty; clear the mirror.
+    clearCurrentWork();
   }
 
   async function handleSaveOrDownloadAll() {
@@ -904,6 +1018,9 @@
     state.savedJustNow = true;
     canvasComp.markSaved();  // reset dirty so next stroke re-triggers onDirtyChange
     if (state.isFullscreen) disableBtn('save');  // no re-saving until drawing changes
+    // Per the redesign plan: explicit Save UPDATES the current-work mirror
+    // (does NOT clear it) — reload-resume should pick up where the user is.
+    autosaveCurrentWork({ immediate: true });
     FP.playSound('saveDrawing');
     renderAll();
   }
@@ -920,6 +1037,9 @@
       state.loadedDrawingEntry = null;
       state.savedJustNow    = false;
       enableBtn('save');  // canvas now has no saved copy — allow saving in fullscreen
+      // Live canvas still shows the (now-deleted) drawing's content; mirror
+      // it to current-work so reload boots into the same view.
+      autosaveCurrentWork({ immediate: true });
       FP.playSound('deleteDrawing');
       renderAll();
     } else {
@@ -947,6 +1067,7 @@
       }, PAGE_FLIP_ANIMATION, () => {
         renderAll();
       });
+      autosaveCurrentWork({ immediate: true });
     }
   }
 
@@ -1023,6 +1144,10 @@
         renderAll();
       });
     }
+    // Mirror to current-work so a reload comes back with the uploaded bg
+    // (or as much as v3 storage's bgColor-only field can capture — uploaded
+    // image bgs collapse to a sampled color, accepted loss per the plan).
+    autosaveCurrentWork({ immediate: true });
     FP.playSound('bgUpload');
   }
 
@@ -1062,6 +1187,8 @@
       // that listener BEFORE onDirtyChange fires, so we don't need a
       // mode-specific close here.)
       onCanvasContentChanged();
+      // Debounced mirror of the live canvas to the current-work autosave.
+      autosaveCurrentWork();
       renderAll();
     }
   }
@@ -1119,8 +1246,10 @@
     }
     // Autosave the current coloring page (if any) BEFORE opening the picker
     // so its tile thumbnail reflects the user's current state. Cheap; no-op
-    // when not on a coloring page or when on the blank canvas.
+    // when not on a coloring page or when on the blank canvas. Also flush
+    // the current-work mirror so reload-resume captures pre-pick state.
     autosaveCurrentColoringPage();
+    autosaveCurrentWork({ immediate: true });
     // Switch to this book's pages and open the picker over the canvas.
     const pages = await FP.coloringBook.switchBook(bookId);
     state.currentBookId = bookId;
@@ -1190,14 +1319,14 @@
   //     slot 2 = indicator, slot 3 = next. Slots 0, 4–7 stay empty.
   //   Portrait  (tools in top row, left→right):   slot 3 = prev,
   //     slot 4 = indicator, slot 5 = next. Slots 0–2, 6–7 stay empty.
-  //   Crayon (single bgFill slot):                indicator + tap-to-advance
-  //     (wraps when more than one grid-page).
+  //   Crayon (tools column empty — bgFill is replaced by the page-bg
+  //          toggle in Save's slot): a single combined indicator at the
+  //          MIDDLE chrome position (right side / top-middle), same place
+  //          the non-Crayon indicator would sit.
   //
-  // The remaining tool slots are intentionally blank — keeps the drawing
-  // tools fully unreachable so taps can't change the brush mid-pick.
+  // Chrome positions come from layout (pickerChromePrev/Mid/NextXY) not
+  // from layout.tools[i], so Crayon's empty toolOrder doesn't move them.
   function _renderPickerChrome(layout) {
-    const tools = layout.tools;
-    if (!tools.length) return;
     const B = layout.B;
     const total = FP.pagePicker.getGridPageCount(layout, state.coloringPages);
     const cur = FP.pagePicker.getScrollOffset();
@@ -1210,11 +1339,14 @@
       `${cur+1}<br><span style="font-size:${Math.round(B*0.16)}px;opacity:0.6;">of ${total}</span>` +
       `</div>`;
 
-    // Single-slot variant (Crayon): combine indicator + advance-on-tap.
-    if (tools.length === 1) {
-      const slot = tools[0];
+    const isCrayon = !!CFG.clearOnly;
+
+    // Crayon: single combined indicator (tap-to-advance, wraps) at the
+    // middle chrome slot. Right side in landscape, top-middle in portrait.
+    if (isCrayon) {
+      const p = layout.pickerChromeMidXY;
       makeBtn({
-        x: slot.x, y: slot.y, size: B,
+        x: p.x, y: p.y, size: B,
         indicator: true,
         onTap: total > 1
           ? () => {
@@ -1233,19 +1365,12 @@
       return;
     }
 
-    // 8-slot variants. Pick the slot indices per orientation; for both, the
-    // 3 chrome buttons are CONTIGUOUS (the user wanted prev/indicator/next
-    // grouped together, not spread across the tools column/row).
-    const prevIdx = isLandscape ? 1 : 3;
-    const midIdx  = isLandscape ? 2 : 4;
-    const nextIdx = isLandscape ? 3 : 5;
-    const prevSlot = tools[prevIdx];
-    const midSlot  = tools[midIdx];
-    const nextSlot = tools[nextIdx];
-    if (!prevSlot || !midSlot || !nextSlot) return;   // tools array too short
-
+    // Non-Crayon: prev / indicator / next at three contiguous chrome slots.
+    const prev = layout.pickerChromePrevXY;
+    const mid  = layout.pickerChromeMidXY;
+    const next = layout.pickerChromeNextXY;
     makeBtn({
-      x: prevSlot.x, y: prevSlot.y, size: B,
+      x: prev.x, y: prev.y, size: B,
       onTap: () => _pickerGridScroll(-1),
       innerHTML: FP.icon(prevIcon, B * 0.44),
       ariaLabel: 'Previous grid-page',
@@ -1253,14 +1378,14 @@
       extraClass: 'picker-chrome',
     });
     makeBtn({
-      x: midSlot.x, y: midSlot.y, size: B,
+      x: mid.x, y: mid.y, size: B,
       indicator: true,
       innerHTML: indicatorHtml,
       ariaLabel: `Grid-page ${cur+1} of ${total}`,
       extraClass: 'picker-chrome',
     });
     makeBtn({
-      x: nextSlot.x, y: nextSlot.y, size: B,
+      x: next.x, y: next.y, size: B,
       onTap: () => _pickerGridScroll(+1),
       innerHTML: FP.icon(nextIcon, B * 0.44),
       ariaLabel: 'Next grid-page',
@@ -1277,8 +1402,11 @@
       FP.pagePicker.close();
     }
     if (state.coloringBookOpen) {
-      // Autosave current state so picker thumbnails reflect what's on canvas.
+      // Autosave current state so picker thumbnails reflect what's on canvas
+      // (for coloring pages) and so the current-work mirror is up-to-date
+      // (for everything else) before the user starts navigating.
       autosaveCurrentColoringPage();
+      autosaveCurrentWork({ immediate: true });
       // Pages for the saved book are reactive — pull the latest before opening.
       _refreshSavedBookPagesIfActive();
       _clampBookshelfScroll();
@@ -1375,8 +1503,11 @@
     });
 
     // If the user previewed a different bg color, persist it into the
-    // autosave so the next reload of this page remembers it.
+    // autosave so the next reload of this page remembers it. Otherwise
+    // still mirror the pointer to current-work so resume-on-reload re-loads
+    // this page.
     if (bgColorOverride) autosaveCurrentColoringPage();
+    else                 autosaveCurrentWork({ immediate: true });
   }
 
   async function loadBlankCanvas(bgColorOverride) {
@@ -1398,11 +1529,14 @@
     }, PAGE_FLIP_ANIMATION, () => {
       renderAll();
     });
+    autosaveCurrentWork({ immediate: true });
   }
 
-  function autosaveCurrentColoringPage() {
+  // Synchronous writer for the per-coloring-page autosave (called from the
+  // unified _writeCurrentWork below when the canvas is showing a coloring
+  // page). Captures bgColor + strokes + thumb directly from the canvas.
+  function _writeColoringPageAutosave() {
     if (!state.currentColoringPageId) return;
-    // Don't autosave the blank canvas — it's transient
     if (state.currentColoringPageId === '__blank-white') return;
     try {
       const page = state.coloringPages.find(p => p.id === state.currentColoringPageId);
@@ -1420,12 +1554,179 @@
     }
   }
 
+  // Backward-compat shim — callers that want to "save the current coloring
+  // page right now" just flush the unified autosave. Both the per-page
+  // store and the current-work mirror get written.
+  function autosaveCurrentColoringPage() {
+    if (!state.currentColoringPageId) return;
+    if (state.currentColoringPageId === '__blank-white') return;
+    autosaveCurrentWork({ immediate: true });
+  }
+
   function _leavingColoringPage() {
     if (!state.currentColoringPageId) return;
     autosaveCurrentColoringPage();
     state.currentColoringPageId   = null;
     // Clear page dimensions when leaving coloring page
     canvasComp.setPageDimensions(null, null);
+  }
+
+  // ── Current-work autosave (Stage 6: resume-on-reload) ──────────
+
+  // Build the current-work payload from live state + canvas. For coloring
+  // pages we record only the pointer (currentColoringPageId) — the per-
+  // coloring-page autosave already has the content layers. For everything
+  // else (blank canvas, loaded saved drawing, dirty plain canvas) we also
+  // capture bgColor + draw + thumb so the modified state survives reload.
+  function _buildCurrentWorkEntry() {
+    const onColoringPage = !!state.currentColoringPageId
+      && state.currentColoringPageId !== '__blank-white';
+    if (onColoringPage) {
+      return {
+        frameMode: state.frameMode,
+        currentColoringPageId: state.currentColoringPageId,
+        loadedDrawingId: null,
+        bgColor: null, draw: null, thumb: null,
+      };
+    }
+    let bgColor = null, draw = null, thumb = null;
+    try {
+      bgColor = canvasComp.getBgColor();
+      draw    = canvasComp.toDrawingDataURL();
+      thumb   = canvasComp.toTransparentThumbnailDataURL();
+    } catch (_) { /* tainted canvas — leave null */ }
+    return {
+      frameMode: state.frameMode,
+      currentColoringPageId: state.currentColoringPageId,   // may be '__blank-white' or null
+      loadedDrawingId: state.loadedDrawingId || null,
+      bgColor, draw, thumb,
+    };
+  }
+
+  // Debounced write of the current-work mirror. Pass `immediate: true` to
+  // bypass the timer (e.g. just before opening the bookshelf/picker so the
+  // mirror reflects the freshest state).
+  let _currentWorkTimer = null;
+  // Short debounce: long enough to coalesce a flurry of quick strokes into
+  // a single IDB write, short enough that the gap between "last stroke
+  // ended" and "write committed" is small — so the visibilitychange flush
+  // rarely has work to do (the page-kill race is real even for sync IDB).
+  const CURRENT_WORK_DEBOUNCE_MS = 500;
+  function autosaveCurrentWork(opts) {
+    const immediate = !!(opts && opts.immediate);
+    if (immediate) {
+      if (_currentWorkTimer) { clearTimeout(_currentWorkTimer); _currentWorkTimer = null; }
+      _writeCurrentWork();
+      return;
+    }
+    if (_currentWorkTimer) clearTimeout(_currentWorkTimer);
+    _currentWorkTimer = setTimeout(() => {
+      _currentWorkTimer = null;
+      _writeCurrentWork();
+    }, CURRENT_WORK_DEBOUNCE_MS);
+  }
+  function _writeCurrentWork() {
+    // For coloring pages the per-page autosave is the authoritative store
+    // for the content (strokes + bgColor); the current-work mirror just
+    // tracks the pointer. Both writes happen on the same debounced flush
+    // so a single onStrokeEnd persists everything reload-resume needs.
+    if (state.currentColoringPageId && state.currentColoringPageId !== '__blank-white') {
+      _writeColoringPageAutosave();
+    }
+    try { FP.storage.currentWork.write(_buildCurrentWorkEntry()); }
+    catch (e) { console.warn('current-work write skipped', e); }
+  }
+  function clearCurrentWork() {
+    if (_currentWorkTimer) { clearTimeout(_currentWorkTimer); _currentWorkTimer = null; }
+    try { FP.storage.currentWork.clear(); }
+    catch (_) { /* best-effort */ }
+  }
+
+  // Restore the canvas + state from the current-work mirror. Called once at
+  // boot after coloring books have been discovered. Returns true if the
+  // canvas was actually restored to something non-default; false otherwise
+  // (boot continues with the default fresh canvas).
+  async function resumeCurrentWork() {
+    let entry;
+    try { entry = await FP.storage.currentWork.read(); }
+    catch (_) { return false; }
+    if (!entry) return false;
+
+    // Case 1: a coloring page was loaded — re-load it; the per-page
+    // autosave has the content (strokes + bgColor).
+    const pid = entry.currentColoringPageId;
+    if (pid && pid !== '__blank-white') {
+      const page = await FP.coloringBook.findPageById(pid);
+      if (page) {
+        try {
+          // Direct load (no page-flip animation — boot should feel instant).
+          await _directLoadColoringPage(page);
+          // findPageById may have switched the book; sync state so the
+          // bookshelf highlights it correctly when the user opens it.
+          state.currentBookId = page.bookId || FP.coloringBook.getCurrentBookId();
+          state.coloringPages = FP.coloringBook.list();
+          return true;
+        } catch (_) { /* fall through to default boot */ }
+      }
+    }
+
+    // Case 2: a saved drawing was loaded (possibly with unsaved edits).
+    // Prefer the current-work content (the edits) over the entry's stored
+    // content; fall back to the entry's stored content if we don't have
+    // current-work layers.
+    if (entry.loadedDrawingId) {
+      const savedEntry = FP.storage.get(entry.loadedDrawingId);
+      if (savedEntry) {
+        const bgColor = entry.bgColor || savedEntry.bgColor || '#ffffff';
+        const draw    = entry.draw    || savedEntry.draw    || null;
+        try {
+          await canvasComp.loadLayersFromColorAndDraw(bgColor, draw);
+          state.loadedDrawingId    = savedEntry.id;
+          state.loadedDrawingEntry = savedEntry;
+          state.savedJustNow       = true;       // show Download in non-Crayon
+          state.currentColoringPageId = null;
+          state.frameMode = !!entry.frameMode;
+          return true;
+        } catch (_) { /* fall through */ }
+      }
+    }
+
+    // Case 3: blank canvas (possibly with strokes the user hadn't saved).
+    if (entry.bgColor || entry.draw) {
+      try {
+        await canvasComp.loadLayersFromColorAndDraw(entry.bgColor || '#ffffff', entry.draw);
+        state.currentColoringPageId = '__blank-white';
+        state.loadedDrawingId    = null;
+        state.loadedDrawingEntry = null;
+        state.savedJustNow       = false;
+        state.frameMode = !!entry.frameMode;
+        return true;
+      } catch (_) { /* fall through */ }
+    }
+
+    return false;
+  }
+
+  // Direct (no page-flip animation) load of a coloring page. Used by the
+  // boot-time resume path; shares its core logic with loadColoringPage.
+  async function _directLoadColoringPage(page, bgColorOverride) {
+    const autosave = FP.coloringBook.getAutosave(page.id);
+    const [img, overlayImg] = await Promise.all([
+      FP.coloringBook.loadImage(page),
+      FP.coloringBook.loadOverlay(page),
+    ]);
+    const imgH = Math.round(img.naturalHeight / img.naturalWidth * 1000);
+    const bgColor = bgColorOverride || (autosave && autosave.bgColor) || '#ffffff';
+    canvasComp.setColoringPage(img, overlayImg, bgColor);
+    if (autosave && autosave.draw) await canvasComp.setDrawingFromDataUrl(autosave.draw);
+    else canvasComp.clearDrawing();
+    canvasComp.setPageDimensions(1000, imgH);
+    state.currentColoringPageId   = page.id;
+    state.loadedDrawingId         = null;
+    state.loadedDrawingEntry      = null;
+    state.savedJustNow            = false;
+    enableBtn('save');
+    state.frameMode               = true;
   }
 
   // Scrolls the bookshelf overlay (the books + Upload tile in the strip
