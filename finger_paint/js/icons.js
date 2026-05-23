@@ -75,6 +75,42 @@ FP.icon = function (name, sizePx) {
   return svg;
 };
 
+/**
+ * Page-bg picker icon: a fan of 3 letter-shaped papers in `color`, each with
+ * a black outline so the stack reads as 3 distinct pages. Used in place of
+ * the regular color swatches when the page picker is open — visually cues
+ * the user that tapping selects a page BACKGROUND color, not a paint color.
+ */
+FP.pageFanIcon = function (color, sizePx) {
+  return `<svg width="${sizePx}" height="${sizePx}" viewBox="0 0 24 24">
+    <rect x="3.5" y="6" width="11" height="14" rx="0.8"
+          fill="${color}" stroke="#222" stroke-width="1.2"
+          transform="rotate(-14 9 13)"/>
+    <rect x="9.5" y="6" width="11" height="14" rx="0.8"
+          fill="${color}" stroke="#222" stroke-width="1.2"
+          transform="rotate(14 15 13)"/>
+    <rect x="6.5" y="3.5" width="11" height="14" rx="0.8"
+          fill="${color}" stroke="#222" stroke-width="1.2"/>
+  </svg>`;
+};
+
+/**
+ * Multi-colored variant of pageFanIcon — three papers in three different
+ * default colors. Used as the icon on the Crayon page-bg toggle button.
+ */
+FP.pageFanMulticolorIcon = function (sizePx) {
+  return `<svg width="${sizePx}" height="${sizePx}" viewBox="0 0 24 24">
+    <rect x="3.5" y="6" width="11" height="14" rx="0.8"
+          fill="#f4c64a" stroke="#222" stroke-width="1.2"
+          transform="rotate(-14 9 13)"/>
+    <rect x="9.5" y="6" width="11" height="14" rx="0.8"
+          fill="#5fa5e8" stroke="#222" stroke-width="1.2"
+          transform="rotate(14 15 13)"/>
+    <rect x="6.5" y="3.5" width="11" height="14" rx="0.8"
+          fill="#e87b5f" stroke="#222" stroke-width="1.2"/>
+  </svg>`;
+};
+
 // Active checkmark overlay — white check with black halo, bottom-right corner
 FP.activeMark = function (sizePx) {
   const s = Math.max(8, sizePx * 0.38);

@@ -9,29 +9,51 @@
        numRows depends on height.
      • Each cell sits at  G + n*(B+G)  along its axis.
 
-   Output shape (same in both orientations):
+   The persistent toolbars are only the color palette and the tools
+   column. The "strip line" (row 8 in landscape / col 8 in portrait)
+   carries just three corner buttons — Save, Bookshelf-toggle, Clear —
+   and is otherwise empty (the canvas extends through it). When the
+   bookshelf is opened it overlays the strip line with book covers
+   plus contextual upload/scroll arrows, painted on top of the canvas.
+
+   Slot convention for the bookshelf overlay:
+     slot 0      → Save (or empty in Crayon)
+     slot 1      → Bookshelf-toggle
+     slot 2..n-1 → Scrollable strip (Upload as "first book" non-Crayon,
+                   then book covers, with scroll arrows when overflow)
+     slot n-1    → Clear when bookshelf is closed
+   In landscape, slot k → colX(k); in portrait, slot k → rowY(numRows-1-k)
+   so slot 0 is at the bottom (matching landscape's "leftmost = first").
+
+   Output shape:
    {
      orientation: 'landscape' | 'portrait',
      G, B, frameW, frameH,
+     numCols | numRows,
      canvas:   { left, top, width, height },
-     colors:   [ { idx, x, y, color, kind: 'primary'|'neighbor' }, ... ]   // 16 entries
-     tools:    [ { id, x, y, kind: 'brush'|'sizeUp'|'sizeDown'|'sizeIndicator'|'bgFill' }, ... ]
-     bottomRow:{                                  // landscape only — saved-drawings strip
-                 uploadXY, saveXY, clearXY,
-                 scrollLeftXY, scrollRightXY,
-                 thumbXs:[...], maxVisible
-               }
-     rightCol: {                                  // portrait only
-                 uploadXY, saveXY, clearXY,
-                 scrollUpXY, scrollDownXY,
-                 thumbYs:[...], maxVisible        // thumb[0] sits at last entry (bottom-most)
-               }
-     panels:   [ { left, top, width, height, borders: {top,bottom,left,right} } ]   // bg fills
+     colors:   [ { idx, x, y, color, kind } × 16 ]
+     tools:    [ { id, x, y, kind } × 8 ]
+     // Persistent corner buttons (always rendered):
+     saveXY:        { x, y }   // slot 0 of the strip line
+     bookToggleXY:  { x, y }   // slot 1
+     clearXY:       { x, y }   // slot n-1
+     // Bookshelf overlay helpers:
+     bookshelfSlotCount: <int>            // numCols (landscape) / numRows (portrait)
+     bookshelfSlotXY(slot): { x, y }      // position for any slot index
+     bookshelfRowRect: { left, top, width, height }  // for outside-tap hit-testing
    }
-
-   `nSaved` is needed only to know which scroll arrows to reserve space for.
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
+
+// Pixels of margin between the canvas border and the frame edges where the
+// canvas would otherwise sit flush — small gap so the canvas's 1px border
+// doesn't blend into the browser's chrome edge (bookmark-bar separator etc).
+// Applied on the FLUSH sides only: top/bottom in landscape; left/right in
+// portrait. Sides bordered by toolbars don't need it.
+const CANVAS_EDGE_MARGIN = 2;
+// Landscape bottom gets +1px on top of CANVAS_EDGE_MARGIN — the browser's
+// bottom chrome benefits from a touch more breathing room.
+const CANVAS_BOTTOM_EXTRA_LANDSCAPE = 1;
 
 FP.computeLayout = function (frameW, frameH, nSaved) {
   return frameW >= frameH
@@ -39,8 +61,8 @@ FP.computeLayout = function (frameW, frameH, nSaved) {
     : _portrait (frameW, frameH, nSaved);
 };
 
-/* The 8 non-clear tools, in display order. Clear lives in the
-   bottom-right (landscape) or top-right (portrait) corner instead. */
+/* The 8 non-clear tools, in display order. Clear lives at the strip-line
+   corner of the tools column (slot n-1) instead. */
 FP.toolOrder = [
   { id: 'marker',        kind: 'brush'         },
   { id: 'watercolor',    kind: 'brush'         },
@@ -55,7 +77,7 @@ FP.toolOrder = [
 // ───────────────────────────────────────────────────────────────
 // LANDSCAPE
 // ───────────────────────────────────────────────────────────────
-function _landscape(frameW, frameH, nSaved) {
+function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */) {
   const G = frameH / 100;
   const B = G * 10;
 
@@ -76,76 +98,92 @@ function _landscape(frameW, frameH, nSaved) {
     ...t, x: toolColX, y: rowY(i),
   }));
 
-  // Bottom row: saved-drawings strip
-  // col 0: upload, col 1: save, [scroll-left], thumbs..., [scroll-right], col numCols-1: clear
-  const bottomY = rowY(8);
-  const uploadXY = { x: colX(0), y: bottomY };
-  const saveXY   = { x: colX(1), y: bottomY };
-  const clearXY  = { x: colX(numCols - 1), y: bottomY };
+  // Strip-line corners (row 8): Save / Bookshelf-toggle / Clear.
+  // Save is at slot 0 (was Upload pre-redesign); Bookshelf-toggle at slot 1
+  // (was Save). Clear is unchanged at slot numCols-1.
+  const stripY = rowY(8);
+  const saveXY       = { x: colX(0),           y: stripY };
+  const bookToggleXY = { x: colX(1),           y: stripY };
+  const clearXY      = { x: colX(numCols - 1), y: stripY };
 
-  // Available thumb cols: 2..(numCols-2), inclusive → (numCols - 3) cells
-  const totalThumbCells = Math.max(0, numCols - 3);
-  let needScroll, maxVisible, thumbStartCol, scrollLeftXY = null, scrollRightXY = null;
-
-  if (nSaved <= totalThumbCells) {
-    needScroll    = false;
-    maxVisible    = totalThumbCells;
-    thumbStartCol = 2;
-  } else {
-    needScroll    = true;
-    // Scroll-left occupies col 2, scroll-right occupies col numCols-2
-    scrollLeftXY  = { x: colX(2),            y: bottomY };
-    scrollRightXY = { x: colX(numCols - 2),  y: bottomY };
-    maxVisible    = Math.max(0, totalThumbCells - 2);
-    thumbStartCol = 3;
-  }
-
-  const thumbXs = [];
-  for (let i = 0; i < maxVisible; i++) thumbXs.push(colX(thumbStartCol + i));
-
-  // Canvas: from col 2 left edge, stopping at the right panel's left border
-  // and at the bottom panel's top border (so the canvas doesn't bleed into toolbar areas).
+  // Canvas extends through the empty middle of the strip line. The corner
+  // buttons float in the side columns at z 4 (above the canvas at z 2); the
+  // strip-line middle (cols 2..n-2) is empty unless the bookshelf overlay
+  // opens on top.
+  //
+  // Top + bottom are flush with the frame edges, so we shrink the canvas by
+  // CANVAS_EDGE_MARGIN px on each (plus an extra px at the bottom) so its 1px
+  // border doesn't blend with the browser chrome edge.
   const canvas = {
     left:   colX(2),
-    top:    0,
+    top:    CANVAS_EDGE_MARGIN,
     width:  colX(numCols - 1) - G - colX(2),
-    height: bottomY - G,
+    height: frameH - 2 * CANVAS_EDGE_MARGIN - CANVAS_BOTTOM_EXTRA_LANDSCAPE,
   };
 
-  // Translucent panel backgrounds (so toolbars read against the canvas).
-  // We outline the regions that contain buttons.
-  const panels = [
-    // Left color column (cols 0–1, rows 0..8 — covers top section + bottom row col 0,1)
-    { left: 0,            top: 0,
-      width: colX(2),     height: frameH,
-      borders: { right: true } },
-    // Right tool column (col numCols-1, full height — covers tools + clear)
-    { left: colX(numCols - 1) - G, top: 0,
-      width: B + 2 * G,            height: frameH,
-      borders: { left: true } },
-    // Bottom strip (between the two side panels, row 8 area)
-    { left: colX(2),                                    top: bottomY - G,
-      width: colX(numCols - 1) - colX(2),               height: B + 2 * G,
-      borders: { top: true } },
-  ];
+  // Extended canvas (Crayon variant — tools column empty). Used for coloring
+  // pages where the page would otherwise be too small in `canvas`: extends
+  // right to the viewport edge (gaining width) but stops above the strip
+  // line (= 8 button rows + 7 gaps tall). app.js picks between `canvas` and
+  // `canvasExtended` per page aspect so a wide page gets the extra width
+  // without windowboxing a tall page.
+  const canvasExtended = (FP.toolOrder.length === 0)
+    ? {
+        left:   colX(2),
+        top:    CANVAS_EDGE_MARGIN,
+        width:  frameW - colX(2) - CANVAS_EDGE_MARGIN,
+        height: rowY(8) - G - CANVAS_EDGE_MARGIN,
+      }
+    : null;
+
+  // Page-picker grid rect — where the picker tiles live when the picker is
+  // open. Aligned with the button grid (rowY(0), colX(2)) so tiles line up
+  // with the color column and tools column. Stops above the bookshelf row
+  // (rowY(8) - G) so the bookshelf stays accessible underneath, and stops
+  // LEFT of the tools column so the picker chrome (right-column middle row)
+  // stays visible regardless of variant.
+  //
+  // pickerGridCols / pickerGridRows are exact INTEGER counts (not derived
+  // from width/(B+G) which drifts under float rounding). pickerSlotXY(col,
+  // row) returns the absolute pixel position for tile (col, row) using the
+  // layout's own colX/rowY — bypassing any float compounding the picker
+  // would otherwise do internally.
+  const pickerGridRect = {
+    left:   colX(2),
+    top:    rowY(0),
+    width:  colX(numCols - 1) - G - colX(2),
+    height: rowY(8) - G - rowY(0),
+  };
+  const pickerGridCols = numCols - 3;   // slots 2..numCols-2
+  const pickerGridRows = 8;             // rows 0..7 (above strip)
+
+  // Page-picker chrome (prev/indicator/next) lives at fixed slots independent
+  // of FP.toolOrder so that Crayon (toolOrder = []) still has somewhere to
+  // put them. Landscape: right column, rows 1/2/3. The Crayon single-button
+  // variant uses the middle (rowY(2)) only.
+  const chromeColX = colX(numCols - 1);
+  const pickerChromePrevXY = { x: chromeColX, y: rowY(1) };
+  const pickerChromeMidXY  = { x: chromeColX, y: rowY(2) };
+  const pickerChromeNextXY = { x: chromeColX, y: rowY(3) };
 
   return {
     orientation: 'landscape',
     G, B, frameW, frameH, numCols,
-    canvas, colors, tools, panels,
-    bottomRow: {
-      uploadXY, saveXY, clearXY,
-      scrollLeftXY, scrollRightXY,
-      thumbXs, maxVisible, hasOverflow: needScroll,
-      y: bottomY,
-    },
+    canvas, canvasExtended, colors, tools,
+    saveXY, bookToggleXY, clearXY,
+    bookshelfSlotCount: numCols,
+    bookshelfSlotXY(slot) { return { x: colX(slot), y: stripY }; },
+    bookshelfRowRect: { left: 0, top: stripY, width: frameW, height: B },
+    pickerGridRect, pickerGridCols, pickerGridRows,
+    pickerSlotXY(col, row) { return { x: colX(2 + col), y: rowY(row) }; },
+    pickerChromePrevXY, pickerChromeMidXY, pickerChromeNextXY,
   };
 }
 
 // ───────────────────────────────────────────────────────────────
 // PORTRAIT
 // ───────────────────────────────────────────────────────────────
-function _portrait(frameW, frameH, nSaved) {
+function _portrait(frameW, frameH/*, nSaved (unused) */) {
   const G = frameW / 100;
   const B = G * 10;
 
@@ -153,13 +191,13 @@ function _portrait(frameW, frameH, nSaved) {
   const colX = c => G + c * (B + G);
   const rowY = r => G + r * (B + G);
 
-  // Top tool row: row 0, cols 0..7 (tools), col 8 = clear
+  // Top tool row: row 0, cols 0..7 (tools), col 8 holds Clear at the corner
   const tools = FP.toolOrder.map((t, i) => ({
     ...t, x: colX(i), y: rowY(0),
   }));
 
-  // Color swatches: bottom 2 rows (numRows-2 = primary/top, numRows-1 = neighbor/bottom)
-  // cols 0..7
+  // Color swatches: bottom 2 rows (numRows-2 primary, numRows-1 neighbor),
+  // cols 0..7. Col 8 of these rows holds Bookshelf-toggle + Save.
   const colors = [];
   const primaryRowY  = rowY(numRows - 2);
   const neighborRowY = rowY(numRows - 1);
@@ -168,71 +206,81 @@ function _portrait(frameW, frameH, nSaved) {
     colors.push({ idx: c * 2 + 1, x: colX(c), y: neighborRowY, kind: 'neighbor' });
   }
 
-  // Right column (col 8): clear top, scrollUp, …thumbs going down (newest at bottom)…, scrollDown, save, upload
-  const rightX = colX(8);
-  const clearXY  = { x: rightX, y: rowY(0) };
-  const uploadXY = { x: rightX, y: rowY(numRows - 1) };
-  const saveXY   = { x: rightX, y: rowY(numRows - 2) };
+  // Strip-line corners (col 8): Clear at top (slot n-1 visually), Bookshelf-
+  // toggle just above Save at the bottom. Slot 0 (bottom) = Save matches the
+  // landscape convention of "Save = leftmost/bottommost = first."
+  const stripX = colX(8);
+  const clearXY       = { x: stripX, y: rowY(0)       };  // slot numRows-1 (top)
+  const bookToggleXY  = { x: stripX, y: primaryRowY   };  // slot 1
+  const saveXY        = { x: stripX, y: neighborRowY  };  // slot 0 (bottom)
 
-  // Saved-drawings vertical strip: rows 1..(numRows - 3) inclusive when no overflow.
-  // With overflow: scrollUp at row 1, scrollDown at row numRows-3.
-  const stripFirstRow = 1;          // just below clear
-  const stripLastRow  = numRows - 3; // just above save
-  const totalStripRows = Math.max(0, stripLastRow - stripFirstRow + 1);
-
-  let needScroll, maxVisible, scrollUpXY = null, scrollDownXY = null, thumbRowSpan;
-  if (nSaved <= totalStripRows) {
-    needScroll   = false;
-    maxVisible   = totalStripRows;
-    thumbRowSpan = { firstRow: stripFirstRow, lastRow: stripLastRow };
-  } else {
-    needScroll   = true;
-    scrollUpXY   = { x: rightX, y: rowY(stripFirstRow) };
-    scrollDownXY = { x: rightX, y: rowY(stripLastRow)  };
-    maxVisible   = Math.max(0, totalStripRows - 2);
-    thumbRowSpan = { firstRow: stripFirstRow + 1, lastRow: stripLastRow - 1 };
-  }
-
-  // thumb[0] = most recent at the BOTTOM of strip (closest to save)
-  const thumbYs = [];
-  for (let i = 0; i < maxVisible; i++) {
-    thumbYs.push(rowY(thumbRowSpan.lastRow - i)); // i=0 → bottom-most
-  }
-
-  // Canvas: left=0, top below top tool row, right at right panel's left border,
-  // bottom at bottom color panel's top border (no bleed into toolbar areas).
+  // Canvas: top below the top tool row, bottom above the color rows. Extends
+  // horizontally to frameW (through col 8's empty middle); col 8's corner
+  // buttons float at z 4 above the canvas.
+  //
+  // Left + right are flush with the frame edges, so we shrink the canvas by
+  // CANVAS_EDGE_MARGIN px on each so its 1px border doesn't blend with the
+  // browser chrome edge.
   const canvasTop = rowY(0) + B + G;
   const canvas = {
-    left:   0,
+    left:   CANVAS_EDGE_MARGIN,
     top:    canvasTop,
-    width:  colX(8) - G,
+    width:  frameW - 2 * CANVAS_EDGE_MARGIN,
     height: primaryRowY - G - canvasTop,
   };
 
-  const panels = [
-    // Top toolbar (row 0)
-    { left: 0,                                top: 0,
-      width: frameW,                          height: rowY(0) + B + G,
-      borders: { bottom: true } },
-    // Bottom color rows
-    { left: 0,                                top: primaryRowY - G,
-      width: frameW,                          height: frameH - (primaryRowY - G),
-      borders: { top: true } },
-    // Right column (between top toolbar and color rows)
-    { left: rightX - G,                       top: rowY(0) + B + G,
-      width: B + 2 * G,                       height: primaryRowY - G - (rowY(0) + B + G),
-      borders: { left: true } },
-  ];
+  // Extended canvas (Crayon variant — top tool row empty). Used for coloring
+  // pages where the page would otherwise be too narrow in `canvas`: extends
+  // up to the viewport edge (gaining height) but stops left of the bookshelf
+  // column. Width is bounded by "8 buttons" since Clear at col 8 row 0 must
+  // stay accessible. app.js picks per page aspect so a tall page gets the
+  // extra height without windowboxing a wide page.
+  const canvasExtended = (FP.toolOrder.length === 0)
+    ? {
+        left:   CANVAS_EDGE_MARGIN,
+        top:    CANVAS_EDGE_MARGIN,
+        width:  colX(8) - G - CANVAS_EDGE_MARGIN,
+        height: primaryRowY - G - CANVAS_EDGE_MARGIN,
+      }
+    : null;
+
+  // Page-picker grid rect — where picker tiles live when the picker is open.
+  // Aligned with the button grid (rowY(1), colX(0)) so tiles line up with
+  // the top tool row's first column. Stops left of the bookshelf column
+  // (col 8 - G) so the bookshelf stays accessible alongside, and stops
+  // BELOW the top tool row so the picker chrome (top-middle) stays visible
+  // regardless of variant.
+  //
+  // pickerGridCols / pickerGridRows are exact INTEGER counts (see landscape
+  // comments). pickerSlotXY uses colX/rowY so positions match the rest of
+  // the button grid without float compounding.
+  const pickerGridRect = {
+    left:   colX(0),
+    top:    rowY(1),
+    width:  colX(8) - G - colX(0),
+    height: primaryRowY - G - rowY(1),
+  };
+  const pickerGridCols = 8;             // cols 0..7
+  const pickerGridRows = numRows - 3;   // rows 1..numRows-3
+
+  // Picker chrome positions (see landscape comments). Portrait: top row,
+  // cols 3/4/5 — Crayon's single button uses colX(4), top-middle.
+  const chromeRowY = rowY(0);
+  const pickerChromePrevXY = { x: colX(3), y: chromeRowY };
+  const pickerChromeMidXY  = { x: colX(4), y: chromeRowY };
+  const pickerChromeNextXY = { x: colX(5), y: chromeRowY };
 
   return {
     orientation: 'portrait',
     G, B, frameW, frameH, numRows,
-    canvas, colors, tools, panels,
-    rightCol: {
-      uploadXY, saveXY, clearXY,
-      scrollUpXY, scrollDownXY,
-      thumbYs, maxVisible, hasOverflow: needScroll,
-      x: rightX,
-    },
+    canvas, canvasExtended, colors, tools,
+    saveXY, bookToggleXY, clearXY,
+    bookshelfSlotCount: numRows,
+    // slot 0 = bottom of strip → newer-to-older feels right
+    bookshelfSlotXY(slot) { return { x: stripX, y: rowY(numRows - 1 - slot) }; },
+    bookshelfRowRect: { left: stripX, top: 0, width: B, height: frameH },
+    pickerGridRect, pickerGridCols, pickerGridRows,
+    pickerSlotXY(col, row) { return { x: colX(col), y: rowY(1 + row) }; },
+    pickerChromePrevXY, pickerChromeMidXY, pickerChromeNextXY,
   };
-};
+}

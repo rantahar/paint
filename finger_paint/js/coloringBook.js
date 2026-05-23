@@ -41,6 +41,15 @@ const CB_DB_NAME = 'fingerPaint.coloring';
 const CB_DB_VER  = 1;
 const CB_STORE   = 'autosaves';
 
+// Synthetic book containing the user's saved drawings. Always first in
+// _cachedBooks. Pages are derived live from FP.storage.list() so they reflect
+// post-save / post-delete changes without manual cache invalidation.
+const SAVED_BOOK_ID = '__saved';
+
+// Synthetic book containing a flat manifest's pages (or autoindex pages).
+// Only created when manifest.json had no `books` array.
+const FLAT_BOOK_ID = '__flat';
+
 function _coloringDir() {
   // crayon-mode lives one level down — walk up to reach the shared folder.
   const inCrayon = location.pathname.includes('/crayon-mode/');
@@ -53,6 +62,7 @@ let _cachedPages     = [];         // pages from current book
 let _currentBookId   = null;       // id of the currently selected book
 const _imageCache    = new Map();   // id → HTMLImageElement promise
 const _overlayCache  = new Map();   // id → HTMLImageElement|null promise
+const _coverCache    = new Map();   // bookId → resolved cover URL (skipped for the synthetic saved book — its cover is reactive)
 
 let _cbDb  = null;
 let _cache = {};   // pageId (or bookId:pageId) → { pageId, bgColor?, draw, thumb, name, t }
@@ -103,26 +113,34 @@ FP.coloringBook = {
   },
 
   /**
-   * Discovers available coloring pages/books. Returns a cached promise on
-   * subsequent calls. If books are found, loads the first book by default.
-   * For backward compatibility, also handles flat page manifests.
-   * Returns an array of pages from the active book (or all pages if flat manifest).
+   * Discovers available coloring books and pages. Returns a cached promise on
+   * subsequent calls. Always prepends the synthetic "Saved Drawings" book as
+   * the first entry in the book list, and defaults the current book to it
+   * (so the initial page list is the user's saved drawings).
+   *
+   * Resolution order for coloring books:
+   *   1. manifest.json with `{ books: [...] }` — books-based (primary).
+   *   2. manifest.json with `{ pages: [...] }` — flat manifest is wrapped in
+   *      a synthetic "__flat" book.
+   *   3. directory autoindex of `processed/` — same wrapping.
+   *   4. No coloring books — only the saved book remains.
+   *
+   * Returns the pages of the default current book (saved drawings).
    */
   discover() {
     if (_discoverPromise) return _discoverPromise;
     _discoverPromise = (async () => {
       const dir = _coloringDir();
+      let coloringBooks = [];
+      let flatPages = null;
 
-      // 1. manifest.json (primary) — check for books or flat pages
+      // 1. manifest.json (primary) — books or flat pages
       try {
         const r = await fetch(dir + 'manifest.json', { cache: 'no-cache' });
         if (r.ok) {
           const data = await r.json();
-
-          // New format: books-based manifest
           if (data && Array.isArray(data.books)) {
-            // Load thumbnail for each book from its manifest
-            _cachedBooks = await Promise.all(data.books.map(async (book) => {
+            coloringBooks = await Promise.all(data.books.map(async (book) => {
               try {
                 const bookManifest = await fetch(dir + book.manifest, { cache: 'no-cache' }).then(r => r.json());
                 return { ...book, thumbnail: bookManifest.thumbnail || null };
@@ -130,54 +148,70 @@ FP.coloringBook = {
                 return { ...book, thumbnail: null };
               }
             }));
-            if (_cachedBooks.length > 0) {
-              _currentBookId = _cachedBooks[0].id;
-              return await _loadBook(_currentBookId);
-            }
-          }
-
-          // Old format: flat pages manifest
-          if (data && Array.isArray(data.pages)) {
-            const pages = data.pages.map(p => ({
+          } else if (data && Array.isArray(data.pages)) {
+            flatPages = data.pages.map(p => ({
               id:         p.file,
               name:       p.name || _filenameToName(p.file),
               url:        dir + p.file,
               overlayUrl: p.overlay ? dir + p.overlay : null,
             }));
-            _cachedPages = _prependBlankEntry(pages);
-            return _cachedPages;
           }
         }
       } catch (e) { /* fall through to autoindex */ }
 
-      // 2. directory autoindex (dev only) — use processed/ subdirectory
-      try {
-        const processedDir = dir + 'processed/';
-        const r = await fetch(processedDir, { headers: { Accept: 'text/html' } });
-        if (r.ok) {
-          const ct = r.headers.get('content-type') || '';
-          if (ct.includes('text/html')) {
-            const html = await r.text();
-            const files = _parseAutoindex(html);
-            // Pair "<base>_overlay.<ext>" with "<base>.<ext>" if both present.
-            const fileSet = new Set(files);
-            const pageFiles = files.filter(f => !/_overlay\.[^.]+$/i.test(f));
-            const pages = pageFiles.map(f => {
-              const overlayName = _overlayCompanion(f);
-              return {
-                id:         f,
-                name:       _filenameToName(f),
-                url:        processedDir + f,
-                overlayUrl: fileSet.has(overlayName) ? processedDir + overlayName : null,
-              };
-            });
-            _cachedPages = _prependBlankEntry(pages);
-            return _cachedPages;
+      // 2. directory autoindex (dev only) — only if no manifest produced books or flat pages
+      if (coloringBooks.length === 0 && !flatPages) {
+        try {
+          const processedDir = dir + 'processed/';
+          const r = await fetch(processedDir, { headers: { Accept: 'text/html' } });
+          if (r.ok) {
+            const ct = r.headers.get('content-type') || '';
+            if (ct.includes('text/html')) {
+              const html = await r.text();
+              const files = _parseAutoindex(html);
+              const fileSet = new Set(files);
+              const pageFiles = files.filter(f => !/_overlay\.[^.]+$/i.test(f));
+              flatPages = pageFiles.map(f => {
+                const overlayName = _overlayCompanion(f);
+                return {
+                  id:         f,
+                  name:       _filenameToName(f),
+                  url:        processedDir + f,
+                  overlayUrl: fileSet.has(overlayName) ? processedDir + overlayName : null,
+                };
+              });
+            }
           }
-        }
-      } catch (e) { /* fall through */ }
+        } catch (e) { /* fall through */ }
+      }
 
-      _cachedPages = _prependBlankEntry([]);
+      // Wrap flat pages in a synthetic flat book so callers can treat
+      // everything as a "book". manifest is null — page list is baked in.
+      if (flatPages && coloringBooks.length === 0) {
+        coloringBooks = [{
+          id:        FLAT_BOOK_ID,
+          name:      'Coloring Pages',
+          manifest:  null,
+          thumbnail: null,
+          pages:     flatPages,
+        }];
+      }
+
+      // Always prepend the synthetic saved book. It owns the blank-canvas
+      // tile (no other book carries one anymore — see _loadBook).
+      _cachedBooks = [
+        {
+          id:        SAVED_BOOK_ID,
+          name:      'Saved Drawings',
+          manifest:  null,
+          thumbnail: null,
+          synthetic: true,
+        },
+        ...coloringBooks,
+      ];
+
+      _currentBookId = SAVED_BOOK_ID;
+      _cachedPages = _computeSavedBookPages();
       return _cachedPages;
     })();
     return _discoverPromise;
@@ -186,12 +220,26 @@ FP.coloringBook = {
   /**
    * Switch to a different book by ID. Returns promise that resolves
    * with the pages in that book. Only works if books are available.
+   *
+   * Special-cased:
+   *   • SAVED_BOOK_ID: pages are recomputed live from FP.storage.list(),
+   *     prepended with the blank-canvas tile.
+   *   • FLAT_BOOK_ID: pages were baked into the book at discover() time.
    */
   async switchBook(bookId) {
     if (_cachedBooks.length === 0) return _cachedPages;
     const book = _cachedBooks.find(b => b.id === bookId);
     if (!book) return _cachedPages;
     _currentBookId = bookId;
+    if (book.id === SAVED_BOOK_ID) {
+      _cachedPages = _computeSavedBookPages();
+      return _cachedPages;
+    }
+    if (Array.isArray(book.pages) && !book.manifest) {
+      // Synthetic flat book (or any future "pages baked in" book)
+      _cachedPages = book.pages.slice();
+      return _cachedPages;
+    }
     return await _loadBook(bookId);
   },
 
@@ -199,6 +247,83 @@ FP.coloringBook = {
   getCurrentBookId() { return _currentBookId; },
 
   list() { return _cachedPages.slice(); },
+
+  /**
+   * Returns the live page list for the synthetic saved book. The list is
+   * derived from FP.storage.list() on each call, so callers can re-invoke
+   * after a save/delete without going through switchBook().
+   */
+  getSavedBookPages() { return _computeSavedBookPages(); },
+
+  /**
+   * Resolve any picker page ID to its full page object, loading the
+   * containing book on demand. Used by Stage 6's resume-on-reload to
+   * rehydrate the page the user was last viewing. Returns null when the
+   * page no longer exists (e.g. a coloring book was removed since the
+   * autosave was written).
+   *
+   * ID forms:
+   *   '__blank-white'      → the blank-page tile.
+   *   'saved:<entryId>'    → a saved-drawing tile (live from FP.storage).
+   *   '<bookId>:<file>'    → a coloring-page tile from a manifest book.
+   */
+  async findPageById(pageId) {
+    if (!pageId) return null;
+    if (pageId === BLANK_PAGE_ID) return _blankPageTile();
+    if (pageId.startsWith('saved:')) {
+      const entryId = pageId.slice('saved:'.length);
+      const entry = FP.storage && FP.storage.get && FP.storage.get(entryId);
+      if (!entry) return null;
+      return { id: pageId, name: 'Saved drawing', isSavedDrawing: true, entry };
+    }
+    const colonIdx = pageId.indexOf(':');
+    if (colonIdx <= 0) return null;
+    const bookId = pageId.slice(0, colonIdx);
+    try {
+      const pages = await this.switchBook(bookId);
+      return pages.find(p => p.id === pageId) || null;
+    } catch (_) { return null; }
+  },
+
+  /**
+   * Returns the resolved cover-image URL for the book (or a dataURL for the
+   * synthetic saved book), following the chain:
+   *   1. book.thumbnail (from manifest)
+   *   2. <book-dir>/cover.[png|jpg|webp] if it exists
+   *   3. first page of the book
+   * Returns null if no cover could be resolved (caller handles fallback).
+   */
+  resolveBookCover(book) { return _resolveBookCover(book); },
+
+  /**
+   * Returns a Promise<string[]> of every coloring-page ID across every book
+   * (excluding the synthetic saved book). Used by app.js to detect orphaned
+   * autosaves — autosaves whose source page no longer exists in any book.
+   *
+   * Loads each book's manifest on demand; result is computed fresh each call.
+   */
+  async getAllPageIds() {
+    const ids = [];
+    for (const book of _cachedBooks) {
+      if (book.id === SAVED_BOOK_ID) continue;
+      if (Array.isArray(book.pages) && !book.manifest) {
+        ids.push(...book.pages.map(p => p.id));
+        continue;
+      }
+      if (book.manifest) {
+        try {
+          const r = await fetch(_coloringDir() + book.manifest, { cache: 'no-cache' });
+          if (r.ok) {
+            const data = await r.json();
+            if (data && Array.isArray(data.pages)) {
+              for (const p of data.pages) ids.push(book.id + ':' + p.file);
+            }
+          }
+        } catch (e) { /* skip this book */ }
+      }
+    }
+    return ids;
+  },
 
   /** Returns a cached HTMLImageElement (loaded). */
   loadImage(page) {
@@ -258,7 +383,8 @@ FP.coloringBook = {
 // ── Helpers ──────────────────────────────────────────────────
 
 /**
- * Load a book manifest and return its pages.
+ * Load a book manifest and return its pages. Coloring books no longer carry
+ * a blank-canvas tile — the saved book owns the only blank-canvas entry.
  * Caches the result in _cachedPages.
  */
 async function _loadBook(bookId) {
@@ -278,7 +404,7 @@ async function _loadBook(bookId) {
           overlayUrl: p.overlay ? dir + p.overlay : null,
           bookId:     bookId,
         }));
-        _cachedPages = _prependBlankEntry(pages);
+        _cachedPages = pages;
         return _cachedPages;
       }
     }
@@ -290,15 +416,76 @@ async function _loadBook(bookId) {
 
 const BLANK_PAGE_ID = '__blank-white';
 
+function _blankPageTile() {
+  return { id: BLANK_PAGE_ID, name: 'Blank Canvas', isBlank: true };
+}
+
 function _prependBlankEntry(pages) {
-  return [
-    {
-      id: BLANK_PAGE_ID,
-      name: 'Blank Canvas',
-      isBlank: true,
-    },
-    ...pages,
-  ];
+  return [_blankPageTile(), ...pages];
+}
+
+// Live page list for the saved book: [blank-tile, ...saved-drawings].
+function _computeSavedBookPages() {
+  const saved = (window.FP && FP.storage && FP.storage.list) ? FP.storage.list() : [];
+  const pages = saved.map(entry => ({
+    id:              'saved:' + entry.id,
+    name:            entry.name || ('Saved drawing ' + new Date(entry.t).toLocaleString()),
+    isSavedDrawing:  true,
+    entry:           entry,
+  }));
+  return _prependBlankEntry(pages);
+}
+
+// Cover-image resolution: manifest.thumbnail → cover.[ext] → first page.
+// For the synthetic saved book: most-recent saved thumb, or null.
+async function _resolveBookCover(book) {
+  if (book.id !== SAVED_BOOK_ID && _coverCache.has(book.id)) {
+    return _coverCache.get(book.id);
+  }
+
+  let cover = null;
+
+  if (book.id === SAVED_BOOK_ID) {
+    const list = (window.FP && FP.storage && FP.storage.list) ? FP.storage.list() : [];
+    if (list.length > 0) cover = list[0].thumb || list[0].png || null;
+  } else if (book.thumbnail) {
+    // Step 1: manifest's thumbnail field
+    cover = _coloringDir() + book.thumbnail;
+  } else if (book.manifest) {
+    // Step 2: probe <book-dir>/cover.[ext]
+    const bookDir = _coloringDir() + book.manifest.replace(/[^/]+$/, '');
+    for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
+      const url = bookDir + 'cover.' + ext;
+      if (await _imageExists(url)) { cover = url; break; }
+    }
+    // Step 3: first page of the book (load manifest if not cached)
+    if (!cover) {
+      try {
+        const r = await fetch(_coloringDir() + book.manifest, { cache: 'no-cache' });
+        if (r.ok) {
+          const data = await r.json();
+          if (data && Array.isArray(data.pages) && data.pages.length > 0) {
+            cover = _coloringDir() + data.pages[0].file;
+          }
+        }
+      } catch (e) { /* leave cover null */ }
+    }
+  } else if (Array.isArray(book.pages) && book.pages.length > 0) {
+    // Synthetic flat book — first baked page's URL
+    cover = book.pages[0].url;
+  }
+
+  if (book.id !== SAVED_BOOK_ID) _coverCache.set(book.id, cover);
+  return cover;
+}
+
+function _imageExists(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload  = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
 }
 
 function _filenameToName(file) {

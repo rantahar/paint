@@ -140,8 +140,7 @@ html, body {
   border: 2px solid rgba(0,0,0,0.5);
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.3),
-              inset 0 0 0 1px rgba(255,255,255,0.35);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -162,6 +161,18 @@ html, body {
 .btn.active {
   outline: 3px solid #1177EE;
   outline-offset: 1px;
+  /* No z-index override here — keeping the default .btn z-index (4) so an
+     active button stays above the page-picker backdrop (z 3). The outline
+     is 3px with 1px offset = 4px outside the button; adjacent buttons are
+     separated by ≥G px which is comfortably larger, so no need to lift z
+     to avoid neighbor clipping. */
+}
+
+/* When the page picker is open, buttons tagged "below picker" drop UNDER
+   the backdrop (z 3) so the backdrop's shadow visibly darkens them — used
+   for the Save button per the redesign. The button stays in the DOM but is
+   visually dimmed and the backdrop catches taps on its area. */
+.btn.picker-below {
   z-index: 2;
 }
 
@@ -173,6 +184,15 @@ html, body {
   opacity: 0.6;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* "Inactive" — same dimmed look as .disabled, but still accepts taps. Used
+   when a button is contextually unavailable for its primary action but
+   should still consume the tap (e.g., Clear while the bookshelf is open
+   closes the bookshelf instead of clearing). */
+.btn.inactive {
+  filter: grayscale(100%);
+  opacity: 0.6;
 }
 
 body.dialog-open .btn {
@@ -209,32 +229,80 @@ body.dialog-open .btn {
   pointer-events: none;
 }
 
-/* ── Translucent panel backgrounds ── */
-.panel-bg {
-  position: absolute;
-  background: rgba(242,240,235,0.85);
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* ── Canvas frame background (grey fill in margins when coloring page loaded) ── */
-.canvas-frame-bg-fill {
-  position: absolute;
-  background: rgba(242,240,235,0.85);
-  pointer-events: none;
-  z-index: 0;
-}
 
 /* ── Canvas border (frame around drawing area, on top) ── */
 .canvas-frame-bg {
   position: absolute;
   border: 1px solid rgba(0,0,0,0.1);
   pointer-events: none;
-  z-index: 3;
+  z-index: 2;       /* sits with the painting; the page-picker backdrop (z 3) goes over it */
 }
 
 /* Buttons are above all other elements */
 .btn { z-index: 4; }
+
+/* ── Page picker (modal grid over the canvas) ── */
+.page-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: #9E9D99;     /* opaque "lightbox" — matches the apparent color
+                              the translucent overlay used to produce over the
+                              panel backgrounds, but now stable so it doesn't
+                              shift when panel bgs are removed */
+  z-index: 3;              /* over canvas + border (z 2), under regular .btn
+                              (z 4) so the color palette, Save, Bookshelf-
+                              toggle, and Clear stay interactive above it */
+  pointer-events: auto;
+  animation: fadeIn 140ms ease-out;
+}
+
+/* Decorative frame around the picker grid. Sits BETWEEN the lightbox (z 3)
+   and the picker tiles + chrome (z 5) so the tiles read as a distinct
+   surface separate from the bookshelf row below. */
+.page-picker-panel {
+  position: absolute;
+  z-index: 4;
+  background: rgba(242,240,235,0.85);
+  outline: 1px solid rgba(0,0,0,0.1);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+/* Picker tiles + contextual chrome (prev/indicator/next) sit ABOVE the regular
+   .btn z-index so they're clickable on top of the backdrop and the drawing-
+   tools buttons that would otherwise overlap them. */
+.page-picker-grid .btn,
+.btn.picker-chrome {
+  z-index: 5;
+}
+
+/* Tiles use the same .btn.thumb image sizing already defined above. The grid
+   itself is positioned absolutely by JS, one tile per (B × B) slot. */
+.page-picker-grid {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;   /* tile buttons opt back in via .btn pointer-events:auto */
+}
+
+/* Small delete badge in the top-right corner of saved-drawing tiles. */
+.page-tile-delete {
+  position: absolute;
+  z-index: 6;
+  border-radius: 50%;
+  background: #ffd0c0;
+  border: 2px solid #cc4422;
+  color: #882200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  padding: 0;
+  font: inherit;
+}
+.page-tile-delete:active { transform: scale(0.96); }
+.page-tile-delete svg { pointer-events: none; }
 
 /* ── Modal dialog ── */
 .dialog-backdrop {
