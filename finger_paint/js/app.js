@@ -489,7 +489,8 @@
   // Tap a fan swatch while the Crayon page-bg toggle is on — fills the
   // current page bg with that color (same effect as the old bgFill tool,
   // but with the user picking the color rather than using the active paint
-  // color). The toggle stays on so the user can try multiple colors.
+  // color). After setting the background, automatically toggle back to
+  // brush color mode.
   function handlePageBgDirectTap(idx) {
     const color = state.palette[idx];
     const onColoringPage = !!state.currentColoringPageId
@@ -499,6 +500,7 @@
     if (onColoringPage) autosaveCurrentColoringPage();
     else { onCanvasContentChanged(); autosaveCurrentWork({ immediate: true }); }
     FP.playSound('bgFill');
+    state.pageBgToggleActive = false;
     renderAll();
   }
 
