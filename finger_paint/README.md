@@ -4,14 +4,23 @@ A simple, touch-friendly drawing app with multiple brushes, colors, and drawing 
 
 ## Features
 
-- **Four brush types**: marker, watercolor, crayon, eraser
+- **Two-line toolbar**: the first line holds the tools — **Draw**, **Fill**,
+  **Shape**, **Eraser** — plus the thickness controls; the second line is
+  dynamic and shows the active tool's options:
+  - **Draw** → line styles: marker, watercolor, crayon, dashed, dotted
+  - **Fill** → fill an area (tap flood-fills the region you touch) or fill
+    the whole page background
+  - **Shape** → circle, square, triangle, star, heart, flower, moon —
+    press to place, drag to size *and rotate*, plain tap stamps; the
+    outline width is the brush thickness
 - **15 colors plus Rainbow** to choose from with visual color picker
-- **Rainbow paint** — a single swatch that works with every tool. Drawing
+- **Rainbow paint** — a single swatch that composes with every tool. Drawing
   lays the classic colours in parallel bands across the stroke — draw an
-  arc and you get an actual rainbow. Filling paints a rainbow background.
-  Brush thickness scales the rainbow's width (strokes) and the band width
-  (fills), so one swatch and the size slider combine into many effects.
-- **Adjustable brush size** with visual indicator
+  arc and you get an actual rainbow. Filling paints rainbow bands; shape
+  outlines become concentric rainbow rings. Brush thickness scales the
+  rainbow's width, the fill band width, and the shape ring widths.
+- **Adjustable brush size** with visual indicator — thickness restyles
+  every tool (stroke width, dash/dot pattern, fill bands, shape outlines)
 - **Background fill** with solid colors, rainbow, or uploaded images
 - **Save & load drawings** stored in browser localStorage
 - **Multi-touch support** — paint with multiple fingers simultaneously
@@ -48,7 +57,7 @@ Open `index.html` in a modern browser. Works from the `file://` protocol, though
 |---|---|
 | `Ctrl+,` | Decrease brush size |
 | `Ctrl+.` | Increase brush size |
-| `Ctrl+B` | Cycle brush type |
+| `Ctrl+B` | Cycle Draw line styles (switches to Draw first) |
 | `Ctrl+Shift+↑` | Upload background image |
 | `Ctrl+Shift+↓` | Save / download drawing |
 | `Ctrl+G` | Toggle frame / floating-buttons mode |

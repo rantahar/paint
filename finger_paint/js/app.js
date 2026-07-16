@@ -43,7 +43,13 @@
   const state = {
     palette:        DEFAULT_PALETTE.slice(),
     activeColorIdx: DEFAULT_COLOR_IDX,        // black
-    activeBrushId:  CFG.activeBrushId || 'marker',
+    // Two-line toolbar state: the active PRIMARY tool plus the remembered
+    // option for each tool that has an options line. Switching tools keeps
+    // each tool's last-used option.
+    activeToolId:   'draw',                   // 'draw' | 'fill' | 'shape' | 'eraser'
+    lineStyleId:    CFG.activeBrushId || 'marker',  // Draw option (brush id)
+    fillModeId:     'bucket',                 // Fill option: 'bucket' | 'page'
+    shapeId:        'circle',                 // Shape option (see shapes.js)
     sizeIdx:        DEFAULT_SIZE_IDX,
     saved:          [],                       // from storage, most-recent first
     loadedDrawingId: null,                    // currently loaded saved drawing (id) — flipped to null on any change
@@ -162,9 +168,11 @@
     // armed by the FIRST stroke in a session — subsequent strokes would
     // sit unsaved until the visibilitychange flush, racing the page kill.
     canvasComp.onStrokeEnd = () => autosaveCurrentWork();
-    canvasComp.setBrush(FP.brushes[state.activeBrushId]);
+    // Page-fill taps (Fill tool in 'page' mode) reuse the old bgFill flow.
+    canvasComp.onPageFillTap = handleBgFillTap;
     canvasComp.setColor(state.palette[state.activeColorIdx]);
     canvasComp.setSize(SIZE_LEVELS[state.sizeIdx]);
+    applyToolMode();
 
     buttonLayer = document.createElement('div');
     buttonLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
@@ -176,7 +184,9 @@
     // Load saved drawings
     state.saved = FP.storage.list();
 
-    if (CFG.toolOrder) FP.toolOrder = CFG.toolOrder;
+    // Variant override for the primary tool line (Crayon passes [] — no
+    // tool lines at all). The key keeps its historical name.
+    if (CFG.toolOrder) FP.primaryTools = CFG.toolOrder;
 
     // Wire the page picker into our app. The picker owns its own DOM and
     // state (open/closed, current book, grid-page offset, preview color); we
@@ -513,20 +523,22 @@
   }
 
   function renderTools(layout) {
-    // While the page picker is open, the drawing-tools column is replaced
+    // While the page picker is open, the drawing-tools lines are replaced
     // with contextual chrome: prev grid-page, current/total indicator, next
     // grid-page. None of the regular tools are reachable — keeps the user
-    // focused on picking a page and prevents stray taps from changing brush.
+    // focused on picking a page and prevents stray taps from changing tools.
     if (FP.pagePicker.isOpen()) {
       _renderPickerChrome(layout);
       return;
     }
+
+    // PRIMARY line: the tools + size controls.
     layout.tools.forEach(t => {
-      let inner = '', accent = false, indicator = false, active = false;
-      if (t.kind === 'brush') {
-        const brush = FP.brushes[t.id];
-        inner = FP.icon(brush.iconName, layout.B * 0.44);
-        active = (state.activeBrushId === t.id);
+      let inner = '', indicator = false, active = false;
+      if (t.kind === 'tool') {
+        const iconName = t.id === 'eraser' ? FP.brushes.eraser.iconName : t.id;
+        inner = FP.icon(iconName, layout.B * 0.44);
+        active = (state.activeToolId === t.id);
       } else if (t.kind === 'sizeIndicator') {
         indicator = true;
         // In expanded mode the canvas is the full window, not layout.canvas — use
@@ -535,12 +547,12 @@
         const dotPercent = _sizeDotPercent(state.sizeIdx, canvasCssW, layout.B);
         inner = `<div class="size-dot" style="width:${dotPercent}%;height:${dotPercent}%;"></div>`;
       } else {
-        // sizeUp / sizeDown / bgFill
+        // sizeUp / sizeDown
         inner = FP.icon(t.id, layout.B * 0.44);
       }
       const btn = makeBtn({
         x: t.x, y: t.y, size: layout.B,
-        accent, indicator, active,
+        indicator, active,
         onTap: () => handleToolTap(t),
         innerHTML: inner,
         ariaLabel: t.id,
@@ -551,6 +563,69 @@
         btn.onclick = null;
       }
     });
+
+    // OPTIONS line: dynamic per active tool (line styles / fill modes /
+    // shapes; empty for the eraser). Skipped entirely when the variant has
+    // no tools.
+    if (layout.tools.length === 0) return;
+    const options = FP.toolOptions[state.activeToolId] || [];
+    options.slice(0, layout.optionSlotCount).forEach((optId, i) => {
+      const pos = layout.optionSlotXY(i);
+      let inner = '', active = false, label = optId;
+      if (state.activeToolId === 'draw') {
+        const brush = FP.brushes[optId];
+        inner  = FP.icon(brush.iconName, layout.B * 0.44);
+        active = (optId === state.lineStyleId);
+        label  = brush.label;
+      } else if (state.activeToolId === 'fill') {
+        inner  = FP.icon(optId === 'page' ? 'bgFill' : 'fill', layout.B * 0.44);
+        active = (optId === state.fillModeId);
+        label  = optId === 'page' ? 'Fill the whole page' : 'Fill an area';
+      } else if (state.activeToolId === 'shape') {
+        inner  = FP.shapes.icon(optId, layout.B * 0.56);
+        active = (optId === state.shapeId);
+      }
+      makeBtn({
+        x: pos.x, y: pos.y, size: layout.B,
+        active,
+        onTap: () => handleOptionTap(optId),
+        innerHTML: inner,
+        ariaLabel: label,
+      });
+    });
+  }
+
+  // Applies the current tool/option state to the canvas — the ONE place
+  // that translates toolbar state into canvas input mode + brush/shape.
+  function applyToolMode() {
+    const t = state.activeToolId;
+    if (t === 'draw') {
+      canvasComp.setInputMode('brush');
+      canvasComp.setBrush(FP.brushes[state.lineStyleId]);
+    } else if (t === 'eraser') {
+      canvasComp.setInputMode('brush');
+      canvasComp.setBrush(FP.brushes.eraser);
+    } else if (t === 'fill') {
+      canvasComp.setInputMode(state.fillModeId === 'page' ? 'pageFill' : 'bucket');
+    } else if (t === 'shape') {
+      canvasComp.setInputMode('shape');
+      canvasComp.setShape(state.shapeId);
+    }
+  }
+
+  function handleOptionTap(optId) {
+    if (state.activeToolId === 'draw') {
+      state.lineStyleId = optId;
+      FP.playBrushSound(FP.brushes[optId], 'select');
+    } else if (state.activeToolId === 'fill') {
+      state.fillModeId = optId;
+      FP.playSound('toolSelect');
+    } else if (state.activeToolId === 'shape') {
+      state.shapeId = optId;
+      FP.playSound('toolSelect');
+    }
+    applyToolMode();
+    renderAll();
   }
 
   // ── Strip line (Save / Bookshelf-toggle / Clear corners + bookshelf overlay) ─
@@ -882,17 +957,16 @@
   }
 
   function handleToolTap(t) {
-    if (t.kind === 'brush') {
-      state.activeBrushId = t.id;
-      canvasComp.setBrush(FP.brushes[t.id]);
-      FP.playBrushSound(FP.brushes[t.id], 'select');
+    if (t.kind === 'tool') {
+      state.activeToolId = t.id;
+      if (t.id === 'eraser') FP.playBrushSound(FP.brushes.eraser, 'select');
+      else FP.playSound('toolSelect');
+      applyToolMode();
       renderAll();
     } else if (t.kind === 'sizeUp') {
       changeSize(+1);
     } else if (t.kind === 'sizeDown') {
       changeSize(-1);
-    } else if (t.kind === 'bgFill') {
-      handleBgFillTap();
     }
     // sizeIndicator is non-interactive
   }
@@ -906,15 +980,19 @@
     renderAll();
   }
 
+  // Ctrl+B: cycle the Draw line styles. From another tool, first hop back
+  // to Draw (keeping the current style); further presses advance the style.
   function cycleBrush() {
-    const fromOrder = FP.toolOrder.filter(t => t.kind === 'brush').map(t => t.id);
-    const brushIds = fromOrder.length > 0 ? fromOrder : Object.keys(FP.brushes);
-    if (brushIds.length === 0) return;
-    const cur = brushIds.indexOf(state.activeBrushId);
-    const next = brushIds[(cur + 1) % brushIds.length];
-    state.activeBrushId = next;
-    canvasComp.setBrush(FP.brushes[next]);
-    FP.playBrushSound(FP.brushes[next], 'select');
+    const styles = FP.toolOptions.draw;
+    if (styles.length === 0) return;
+    if (state.activeToolId !== 'draw') {
+      state.activeToolId = 'draw';
+    } else {
+      const cur = styles.indexOf(state.lineStyleId);
+      state.lineStyleId = styles[(cur + 1) % styles.length];
+    }
+    FP.playBrushSound(FP.brushes[state.lineStyleId], 'select');
+    applyToolMode();
     renderAll();
   }
 
