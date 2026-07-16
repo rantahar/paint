@@ -9,8 +9,15 @@
        numRows depends on height.
      • Each cell sits at  G + n*(B+G)  along its axis.
 
-   The persistent toolbars are only the color palette and the tools
-   column. The "strip line" (row 8 in landscape / col 8 in portrait)
+   The persistent toolbars are the color palette and TWO tool lines:
+     • the PRIMARY line (outermost column in landscape / top row in
+       portrait): the tools themselves — Draw, Fill, Shape, Eraser —
+       plus the size controls, and
+     • the OPTIONS line next to it (one column inward / one row
+       down): a dynamic strip whose buttons depend on the active
+       tool (line styles for Draw, fill modes for Fill, shape
+       choices for Shape). app.js renders it via optionSlotXY().
+   The "strip line" (last row in landscape / col 8 in portrait)
    carries just three corner buttons — Save, Bookshelf-toggle, Clear —
    and is otherwise empty (the canvas extends through it). When the
    bookshelf is opened it overlays the strip line with book covers
@@ -32,7 +39,9 @@
      numCols | numRows,
      canvas:   { left, top, width, height },
      colors:   [ { idx, x, y, color, kind } × 16 ]
-     tools:    [ { id, x, y, kind } × 8 ]
+     tools:    [ { id, x, y, kind } × 7 ]     // PRIMARY line
+     optionSlotCount: 8                        // OPTIONS line capacity
+     optionSlotXY(slot): { x, y }              // position for option slot
      // Persistent corner buttons (always rendered):
      saveXY:        { x, y }   // slot 0 of the strip line
      bookToggleXY:  { x, y }   // slot 1
@@ -61,18 +70,29 @@ FP.computeLayout = function (frameW, frameH, nSaved) {
     : _portrait (frameW, frameH, nSaved);
 };
 
-/* The 8 non-clear tools, in display order. Clear lives at the strip-line
-   corner of the tools column (slot n-1) instead. */
-FP.toolOrder = [
-  { id: 'marker',        kind: 'brush'         },
-  { id: 'watercolor',    kind: 'brush'         },
-  { id: 'crayon',        kind: 'brush'         },
-  { id: 'eraser',        kind: 'brush'         },
+/* The PRIMARY tool line, in display order. Clear lives at the strip-line
+   corner (slot n-1) instead. Variants can override via CFG.toolOrder
+   (an empty array = no tool lines at all, e.g. Crayon mode). */
+FP.primaryTools = [
+  { id: 'draw',          kind: 'tool'          },
+  { id: 'fill',          kind: 'tool'          },
+  { id: 'shape',         kind: 'tool'          },
+  { id: 'eraser',        kind: 'tool'          },
   { id: 'sizeUp',        kind: 'sizeUp'        },
   { id: 'sizeIndicator', kind: 'sizeIndicator' },
   { id: 'sizeDown',      kind: 'sizeDown'      },
-  { id: 'bgFill',        kind: 'bgFill'        },
 ];
+
+/* The OPTIONS line contents per primary tool. Draw options are brush ids
+   (line styles); fill options are fill modes; shape options come from the
+   shapes registry. An empty list (eraser) leaves the line blank —
+   thickness already covers eraser sizing. */
+FP.toolOptions = {
+  draw:   ['marker', 'watercolor', 'crayon', 'dash', 'dot'],
+  fill:   ['bucket', 'page'],
+  shape:  (window.FP.shapes ? FP.shapes.ORDER.slice() : []),
+  eraser: [],
+};
 
 // ───────────────────────────────────────────────────────────────
 // LANDSCAPE
@@ -92,9 +112,13 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
     colors.push({ idx: r * 2 + 1, x: colX(1), y: rowY(r), kind: 'neighbor' });
   }
 
-  // Tools: rightmost col (numCols-1), rows 0..7
-  const toolColX = colX(numCols - 1);
-  const tools = FP.toolOrder.map((t, i) => ({
+  // Tool lines: PRIMARY in the rightmost col (numCols-1), OPTIONS one col
+  // inward (numCols-2), both rows 0..7. With no tools (Crayon variant)
+  // neither column is reserved and the canvas keeps its full width.
+  const hasTools  = FP.primaryTools.length > 0;
+  const toolColX  = colX(numCols - 1);
+  const optionColX = colX(numCols - 2);
+  const tools = FP.primaryTools.map((t, i) => ({
     ...t, x: toolColX, y: rowY(i),
   }));
 
@@ -111,13 +135,17 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
   // strip-line middle (cols 2..n-2) is empty unless the bookshelf overlay
   // opens on top.
   //
+  // The right edge stops left of the OPTIONS column (or the primary column
+  // when there are no tools — Crayon keeps the wider canvas).
+  //
   // Top + bottom are flush with the frame edges, so we shrink the canvas by
   // CANVAS_EDGE_MARGIN px on each (plus an extra px at the bottom) so its 1px
   // border doesn't blend with the browser chrome edge.
+  const canvasRightX = hasTools ? optionColX : colX(numCols - 1);
   const canvas = {
     left:   colX(2),
     top:    CANVAS_EDGE_MARGIN,
-    width:  colX(numCols - 1) - G - colX(2),
+    width:  canvasRightX - G - colX(2),
     height: frameH - 2 * CANVAS_EDGE_MARGIN - CANVAS_BOTTOM_EXTRA_LANDSCAPE,
   };
 
@@ -127,7 +155,7 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
   // line (= 8 button rows + 7 gaps tall). app.js picks between `canvas` and
   // `canvasExtended` per page aspect so a wide page gets the extra width
   // without windowboxing a tall page.
-  const canvasExtended = (FP.toolOrder.length === 0)
+  const canvasExtended = (!hasTools)
     ? {
         left:   colX(2),
         top:    CANVAS_EDGE_MARGIN,
@@ -170,6 +198,8 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
     orientation: 'landscape',
     G, B, frameW, frameH, numCols,
     canvas, canvasExtended, colors, tools,
+    optionSlotCount: 8,
+    optionSlotXY(slot) { return { x: optionColX, y: rowY(slot) }; },
     saveXY, bookToggleXY, clearXY,
     bookshelfSlotCount: numCols,
     bookshelfSlotXY(slot) { return { x: colX(slot), y: stripY }; },
@@ -191,8 +221,11 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
   const colX = c => G + c * (B + G);
   const rowY = r => G + r * (B + G);
 
-  // Top tool row: row 0, cols 0..7 (tools), col 8 holds Clear at the corner
-  const tools = FP.toolOrder.map((t, i) => ({
+  // Tool lines: PRIMARY in row 0, OPTIONS in row 1, cols 0..7. Col 8 holds
+  // Clear at the corner. With no tools (Crayon variant) neither row is
+  // reserved and the canvas keeps its full height.
+  const hasTools = FP.primaryTools.length > 0;
+  const tools = FP.primaryTools.map((t, i) => ({
     ...t, x: colX(i), y: rowY(0),
   }));
 
@@ -214,14 +247,16 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
   const bookToggleXY  = { x: stripX, y: primaryRowY   };  // slot 1
   const saveXY        = { x: stripX, y: neighborRowY  };  // slot 0 (bottom)
 
-  // Canvas: top below the top tool row, bottom above the color rows. Extends
-  // horizontally to frameW (through col 8's empty middle); col 8's corner
-  // buttons float at z 4 above the canvas.
+  // Canvas: top below the tool lines (primary + options rows), bottom above
+  // the color rows. Extends horizontally to frameW (through col 8's empty
+  // middle); col 8's corner buttons float at z 4 above the canvas. With no
+  // tools only row 0 is skipped (Crayon keeps the taller canvas via
+  // canvasExtended anyway).
   //
   // Left + right are flush with the frame edges, so we shrink the canvas by
   // CANVAS_EDGE_MARGIN px on each so its 1px border doesn't blend with the
   // browser chrome edge.
-  const canvasTop = rowY(0) + B + G;
+  const canvasTop = rowY(hasTools ? 1 : 0) + B + G;
   const canvas = {
     left:   CANVAS_EDGE_MARGIN,
     top:    canvasTop,
@@ -235,7 +270,7 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
   // column. Width is bounded by "8 buttons" since Clear at col 8 row 0 must
   // stay accessible. app.js picks per page aspect so a tall page gets the
   // extra height without windowboxing a wide page.
-  const canvasExtended = (FP.toolOrder.length === 0)
+  const canvasExtended = (!hasTools)
     ? {
         left:   CANVAS_EDGE_MARGIN,
         top:    CANVAS_EDGE_MARGIN,
@@ -274,6 +309,8 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
     orientation: 'portrait',
     G, B, frameW, frameH, numRows,
     canvas, canvasExtended, colors, tools,
+    optionSlotCount: 8,
+    optionSlotXY(slot) { return { x: colX(slot), y: rowY(1) }; },
     saveXY, bookToggleXY, clearXY,
     bookshelfSlotCount: numRows,
     // slot 0 = bottom of strip → newer-to-older feels right

@@ -79,6 +79,14 @@ FP.PaintingCanvas = class {
     this.overlayCtx = this.overlayCanvas.getContext('2d');
     this.paintingEl.appendChild(this.overlayCanvas);
 
+    // Layer 5: transient shape preview (never persisted; cleared on commit)
+    this.previewCanvas = document.createElement('canvas');
+    this.previewCanvas.width  = PAINTING_W;
+    this.previewCanvas.height = this._paintingH;
+    this.previewCanvas.style.pointerEvents = 'none';
+    this.previewCtx = this.previewCanvas.getContext('2d');
+    this.paintingEl.appendChild(this.previewCanvas);
+
     // Cached processed outline bitmaps for re-blitting on resize.
     this._outlineBitmap = null;       // offscreen canvas, processed (white→transparent) outline
     this._overlayBitmap = null;       // offscreen canvas, custom overlay (or null → derive from outline)
@@ -101,6 +109,16 @@ FP.PaintingCanvas = class {
     this.dirtySinceLoad = false;      // true once a stroke touches; reset on save/clear/load
     this.onDirtyChange = null;        // callback for app to update Save↔Download button
     this.onStrokeEnd   = null;        // callback fires when the last active stroke ends
+
+    // Input mode — what a pointer gesture on the canvas does:
+    //   'brush'    → paint strokes with this.brush (default)
+    //   'shape'    → drag out a premade shape (this.shapeId)
+    //   'bucket'   → tap flood-fills the tapped region
+    //   'pageFill' → tap fills the whole page bg (app handles via callback)
+    this.inputMode = 'brush';
+    this.shapeId   = 'circle';
+    this.onPageFillTap = null;        // app callback for 'pageFill' taps
+    this._shapeGestures = new Map();  // pointerId → { cx, cy, r, angle }
 
     // Coloring page dimensions (aspect ratio aware scaling)
     this._pageWidth  = null;          // natural page width in painting units (or null if no page)
@@ -202,6 +220,7 @@ FP.PaintingCanvas = class {
     this.outlineCanvas.style.height = cssH + 'px';
     this.drawCanvas.style.height    = cssH + 'px';
     this.overlayCanvas.style.height = cssH + 'px';
+    this.previewCanvas.style.height = cssH + 'px';
 
     // Canvas border hugs the PAINTING element (the actual drawing area),
     // not the outer wrap. For coloring pages in framed mode, this means
@@ -218,6 +237,16 @@ FP.PaintingCanvas = class {
   setBrush(brush) { this.brush = brush; }
   setColor(color) { this.color = color; }
   setSize(size)   { this.size  = size; }
+  setShape(id)    { this.shapeId = id; }
+  setInputMode(mode) {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    // Leaving shape mode mid-gesture: drop previews without committing.
+    if (mode !== 'shape' && this._shapeGestures.size > 0) {
+      this._shapeGestures.clear();
+      this._clearPreview();
+    }
+  }
 
   // ── Background ops ──────────────────────────────────────────
   /**
@@ -603,6 +632,12 @@ FP.PaintingCanvas = class {
       try { this.drawCanvas.releasePointerCapture(pointerId); } catch (_) {}
     }
     this.activeStrokes.clear();
+    // Drop any in-progress shape gestures without committing them.
+    for (const pointerId of this._shapeGestures.keys()) {
+      try { this.drawCanvas.releasePointerCapture(pointerId); } catch (_) {}
+    }
+    this._shapeGestures.clear();
+    this._clearPreview();
   }
 
   /** Runs `midActionFn` at the midpoint of a 2-stage CSS flip. */
@@ -723,9 +758,161 @@ FP.PaintingCanvas = class {
     }
   }
 
+  // ── Shape gestures ──────────────────────────────────────────
+  // Press = centre; dragging sets the shape's radius AND rotation (drag
+  // straight up = upright). A plain tap (no meaningful drag) stamps at a
+  // default size. Outline width = brush thickness; rainbow paint renders
+  // the outline as concentric colour bands (see shapes.js).
+
+  _updateShapeGesture(g, pt) {
+    const dx = pt.x - g.cx;
+    const dy = pt.y - g.cy;
+    g.r = Math.hypot(dx, dy);
+    // +90° so dragging upward (dy<0 → atan2 = -90°) keeps the shape upright.
+    if (g.r >= 2) g.angle = Math.atan2(dy, dx) + Math.PI / 2;
+  }
+
+  // Effective radius: taps (and tiny accidental drags) stamp at a default
+  // size that scales gently with brush thickness so it always looks
+  // proportionate.
+  _shapeRadius(g) {
+    const MIN_DRAG = 12;                       // painting units
+    if (g.r >= MIN_DRAG) return g.r;
+    return Math.max(70, this.size * 3.5);
+  }
+
+  _redrawShapePreviews() {
+    this._clearPreview();
+    for (const g of this._shapeGestures.values()) {
+      FP.shapes.render(this.previewCtx, this.shapeId,
+                       g.cx, g.cy, this._shapeRadius(g), g.angle,
+                       this.color, this.size * 2);
+    }
+  }
+
+  _commitShape(g) {
+    FP.shapes.render(this.drawCtx, this.shapeId,
+                     g.cx, g.cy, this._shapeRadius(g), g.angle,
+                     this.color, this.size * 2);
+    this._setDirty(true);
+  }
+
+  _clearPreview() {
+    this.previewCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+  }
+
+  // ── Bucket (flood) fill ─────────────────────────────────────
+  // Tap fills the contiguous region around the tap point, bounded by
+  // anything visible: strokes, coloring-page outlines, and background
+  // colour changes. The fill lands on the DRAW layer (so the eraser can
+  // remove it and the overlay outline stays on top). Rainbow paint fills
+  // the region with the band gradient; thickness sets the band width —
+  // same rule as the page fill.
+  _bucketFillAt(pt) {
+    const W = PAINTING_W, H = this._paintingH;
+    const sx = Math.round(pt.x), sy = Math.round(pt.y);
+    if (sx < 0 || sy < 0 || sx >= W || sy >= H) return;
+
+    // Boundary detection runs on the flattened VISIBLE image (bg + outline
+    // + draw); the overlay mirrors the outline so it adds nothing.
+    let data;
+    try {
+      const comp = document.createElement('canvas');
+      comp.width = W; comp.height = H;
+      const cx = comp.getContext('2d');
+      cx.drawImage(this.bgCanvas,      0, 0);
+      cx.drawImage(this.outlineCanvas, 0, 0);
+      cx.drawImage(this.drawCanvas,    0, 0);
+      data = cx.getImageData(0, 0, W, H).data;
+    } catch (err) {
+      console.warn('bucket fill skipped (unreadable canvas)', err);
+      return;
+    }
+
+    const si = (sy * W + sx) * 4;
+    const sr = data[si], sg = data[si + 1], sb = data[si + 2];
+    const TOL2 = 60 * 60;   // per-pixel colour distance² threshold
+
+    const close = (i) => {
+      const dr = data[i] - sr, dg = data[i + 1] - sg, db = data[i + 2] - sb;
+      return dr * dr + dg * dg + db * db < TOL2;
+    };
+
+    // BFS from the seed over 4-connected same-colour pixels.
+    const mask = new Uint8Array(W * H);
+    const stack = new Int32Array(W * H);
+    let sp = 0;
+    stack[sp++] = sy * W + sx;
+    mask[sy * W + sx] = 1;
+    while (sp > 0) {
+      const p = stack[--sp];
+      const x = p % W, y = (p / W) | 0;
+      if (x > 0     && !mask[p - 1] && close((p - 1) * 4)) { mask[p - 1] = 1; stack[sp++] = p - 1; }
+      if (x < W - 1 && !mask[p + 1] && close((p + 1) * 4)) { mask[p + 1] = 1; stack[sp++] = p + 1; }
+      if (y > 0     && !mask[p - W] && close((p - W) * 4)) { mask[p - W] = 1; stack[sp++] = p - W; }
+      if (y < H - 1 && !mask[p + W] && close((p + W) * 4)) { mask[p + W] = 1; stack[sp++] = p + W; }
+    }
+
+    // Dilate the mask by 1px so the fill tucks under anti-aliased line
+    // edges instead of leaving a halo of the old colour.
+    const dilated = new Uint8Array(mask);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = y * W + x;
+        if (!mask[p]) continue;
+        if (x > 0)     dilated[p - 1] = 1;
+        if (x < W - 1) dilated[p + 1] = 1;
+        if (y > 0)     dilated[p - W] = 1;
+        if (y < H - 1) dilated[p + W] = 1;
+      }
+    }
+
+    // Paint the fill (solid or rainbow) into an offscreen canvas, punch it
+    // to the mask, then composite onto the draw layer.
+    const fillCanvas = document.createElement('canvas');
+    fillCanvas.width = W; fillCanvas.height = H;
+    const fctx = fillCanvas.getContext('2d');
+    if (FP.rainbow.isRainbow(this.color)) {
+      FP.rainbow.paintFill(fctx, W, H, FP.rainbow.fillPeriod(this.size));
+    } else {
+      fctx.fillStyle = this.color;
+      fctx.fillRect(0, 0, W, H);
+    }
+    const maskImg = fctx.createImageData(W, H);
+    const md = maskImg.data;
+    for (let p = 0; p < W * H; p++) {
+      if (dilated[p]) md[p * 4 + 3] = 255;    // opaque where filled; rgb irrelevant
+    }
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = W; maskCanvas.height = H;
+    maskCanvas.getContext('2d').putImageData(maskImg, 0, 0);
+    fctx.globalCompositeOperation = 'destination-in';
+    fctx.drawImage(maskCanvas, 0, 0);
+
+    this.drawCtx.drawImage(fillCanvas, 0, 0);
+    this._setDirty(true);
+    FP.playSound('bgFill');
+    if (this.activeStrokes.size === 0 && this._shapeGestures.size === 0 &&
+        this.onStrokeEnd) {
+      this.onStrokeEnd();
+    }
+  }
+
   // ── Pointer handlers ────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
+
+    // Tap-action modes first — they don't start strokes.
+    if (this.inputMode === 'pageFill') {
+      if (this.onPageFillTap) this.onPageFillTap();
+      return;
+    }
+    if (this.inputMode === 'bucket') {
+      const pt = this._eventToCanvas(e);
+      if (pt) this._bucketFillAt(pt);
+      return;
+    }
+
     // setPointerCapture can throw on synthetic / non-primary events;
     // the stroke still works without it, just less robust to gestures
     // that move outside the canvas.
@@ -733,6 +920,13 @@ FP.PaintingCanvas = class {
 
     const pt = this._eventToCanvas(e);
     if (!pt) return;
+
+    if (this.inputMode === 'shape') {
+      // Press = shape centre; the drag (in _onMove) sets radius + rotation.
+      this._shapeGestures.set(e.pointerId, { cx: pt.x, cy: pt.y, r: 0, angle: 0 });
+      this._redrawShapePreviews();
+      return;
+    }
 
     // Rainbow paint: not one stroke but a fan of parallel band sub-strokes
     // (see _beginRainbowStroke). The eraser ignores colour entirely, so it
@@ -753,6 +947,18 @@ FP.PaintingCanvas = class {
   }
 
   _onMove(e) {
+    // Shape gesture in progress: drag sets radius + rotation, live preview.
+    const gesture = this._shapeGestures.get(e.pointerId);
+    if (gesture) {
+      e.preventDefault();
+      const pt = this._eventToCanvas(e);
+      if (pt) {
+        this._updateShapeGesture(gesture, pt);
+        this._redrawShapePreviews();
+      }
+      return;
+    }
+
     let stroke = this.activeStrokes.get(e.pointerId);
 
     // If stroke hasn't started but pointer came from a (color) button, start it
@@ -789,6 +995,24 @@ FP.PaintingCanvas = class {
   }
 
   _onUp(e) {
+    // Shape gesture: commit the previewed shape to the drawing layer.
+    const gesture = this._shapeGestures.get(e.pointerId);
+    if (gesture) {
+      e.preventDefault();
+      const pt = this._eventToCanvas(e);
+      if (pt) this._updateShapeGesture(gesture, pt);
+      this._shapeGestures.delete(e.pointerId);
+      this._commitShape(gesture);
+      this._redrawShapePreviews();
+      try { this.drawCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (FP && FP.state) FP.state.pointerDownOnButton.delete(e.pointerId);
+      if (this._shapeGestures.size === 0 && this.activeStrokes.size === 0 &&
+          this.onStrokeEnd) {
+        this.onStrokeEnd();
+      }
+      return;
+    }
+
     const stroke = this.activeStrokes.get(e.pointerId);
 
     // Clean up button tracking
@@ -863,6 +1087,7 @@ FP.PaintingCanvas = class {
     this.outlineCanvas.height = newH;
     this.drawCanvas.height    = newH;
     this.overlayCanvas.height = newH;
+    this.previewCanvas.height = newH;   // preview is transient — no snapshot needed
 
     this.bgCtx.drawImage(snapBg,    0, 0);
     this.drawCtx.drawImage(snapDraw, 0, 0);
@@ -901,6 +1126,7 @@ FP.PaintingCanvas = class {
       this.outlineCanvas.height = targetH;
       this.drawCanvas.height    = targetH;
       this.overlayCanvas.height = targetH;
+      this.previewCanvas.height = targetH;
       // Outline + overlay are derived — re-blit cleanly.
       this._blitOutline();
       this._blitOverlay();
@@ -913,6 +1139,7 @@ FP.PaintingCanvas = class {
       this.outlineCanvas.style.height = cssH + 'px';
       this.drawCanvas.style.height    = cssH + 'px';
       this.overlayCanvas.style.height = cssH + 'px';
+      this.previewCanvas.style.height = cssH + 'px';
     }
   }
 

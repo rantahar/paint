@@ -20,6 +20,25 @@ FP.icons = {
   eraser:      `<path d="M20 20H7L3 16l10-10 7 7-3 3"/>
                 <path d="M6.5 17.5l5-5" stroke="#aaa" stroke-width="1.5"/>`,
 
+  // Primary tools
+  draw:        `<path d="M17 3l4 4L8 20l-5 1 1-5L17 3z"/>
+                <line x1="14" y1="6" x2="18" y2="10"/>`,
+
+  fill:        `<path d="M11 3l8 8-7 7a2 2 0 01-2.8 0L4 12.8a2 2 0 010-2.8L11 3z"/>
+                <line x1="11" y1="3" x2="8" y2="6"/>
+                <path d="M20.5 14.5s1.8 2.1 1.8 3.4a1.8 1.8 0 01-3.6 0c0-1.3 1.8-3.4 1.8-3.4z"
+                      fill="#5fa5e8" stroke="#222" stroke-width="1.6"/>`,
+
+  shape:       `<circle cx="9" cy="9" r="5.5"/>
+                <rect x="11.5" y="11.5" width="9.5" height="9.5" rx="1.5"/>`,
+
+  // Line styles (Draw options)
+  dash:        `<line x1="3" y1="12" x2="21" y2="12" stroke-dasharray="4.5 4"/>`,
+
+  dot:         `<circle cx="4.5" cy="12" r="1.9" fill="#222" stroke="none"/>
+                <circle cx="12"  cy="12" r="1.9" fill="#222" stroke="none"/>
+                <circle cx="19.5" cy="12" r="1.9" fill="#222" stroke="none"/>`,
+
   sizeUp:      `<line x1="12" y1="5" x2="12" y2="19"/>
                 <line x1="5" y1="12" x2="19" y2="12"/>`,
 
