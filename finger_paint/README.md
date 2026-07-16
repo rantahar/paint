@@ -52,6 +52,19 @@ Then visit `http://localhost:8765/finger_paint/` (or `.../finger_paint/crayon-mo
 ### Option 2: Open directly
 Open `index.html` in a modern browser. Works from the `file://` protocol, though some features (image upload) work better when served over HTTP.
 
+## Installing on a Tablet (PWA)
+
+Both variants ship a web app manifest, so when served **over HTTPS** (e.g.
+GitHub Pages), Chrome on Android offers **Add to Home Screen → Install**.
+The installed app opens standalone — no address bar, no tabs — and appears
+as its own app in the recents view, where Android's **app pinning**
+(Settings → Security → App pinning, ideally with "ask for PIN before
+unpinning") can lock the device to it. The standard app and crayon-mode
+have separate manifests and install as two separate apps.
+
+Note: over plain HTTP (like the local python server above) Chrome falls
+back to a bookmark-style shortcut that opens as a normal browser tab.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
