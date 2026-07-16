@@ -48,7 +48,6 @@
     // each tool's last-used option.
     activeToolId:   'draw',                   // 'draw' | 'fill' | 'shape' | 'eraser'
     lineStyleId:    CFG.activeBrushId || 'marker',  // Draw option (brush id)
-    fillModeId:     'bucket',                 // Fill option: 'bucket' | 'page'
     shapeId:        'circle',                 // Shape option (see shapes.js)
     sizeIdx:        DEFAULT_SIZE_IDX,
     saved:          [],                       // from storage, most-recent first
@@ -168,8 +167,6 @@
     // armed by the FIRST stroke in a session — subsequent strokes would
     // sit unsaved until the visibilitychange flush, racing the page kill.
     canvasComp.onStrokeEnd = () => autosaveCurrentWork();
-    // Page-fill taps (Fill tool in 'page' mode) reuse the old bgFill flow.
-    canvasComp.onPageFillTap = handleBgFillTap;
     canvasComp.setColor(state.palette[state.activeColorIdx]);
     canvasComp.setSize(SIZE_LEVELS[state.sizeIdx]);
     applyToolMode();
@@ -547,7 +544,7 @@
         const dotPercent = _sizeDotPercent(state.sizeIdx, canvasCssW, layout.B);
         inner = `<div class="size-dot" style="width:${dotPercent}%;height:${dotPercent}%;"></div>`;
       } else {
-        // sizeUp / sizeDown
+        // sizeUp / sizeDown / bgFill
         inner = FP.icon(t.id, layout.B * 0.44);
       }
       const btn = makeBtn({
@@ -577,10 +574,6 @@
         inner  = FP.icon(brush.iconName, layout.B * 0.44);
         active = (optId === state.lineStyleId);
         label  = brush.label;
-      } else if (state.activeToolId === 'fill') {
-        inner  = FP.icon(optId === 'page' ? 'bgFill' : 'fill', layout.B * 0.44);
-        active = (optId === state.fillModeId);
-        label  = optId === 'page' ? 'Fill the whole page' : 'Fill an area';
       } else if (state.activeToolId === 'shape') {
         inner  = FP.shapes.icon(optId, layout.B * 0.56);
         active = (optId === state.shapeId);
@@ -606,7 +599,7 @@
       canvasComp.setInputMode('brush');
       canvasComp.setBrush(FP.brushes.eraser);
     } else if (t === 'fill') {
-      canvasComp.setInputMode(state.fillModeId === 'page' ? 'pageFill' : 'bucket');
+      canvasComp.setInputMode('bucket');
     } else if (t === 'shape') {
       canvasComp.setInputMode('shape');
       canvasComp.setShape(state.shapeId);
@@ -617,9 +610,6 @@
     if (state.activeToolId === 'draw') {
       state.lineStyleId = optId;
       FP.playBrushSound(FP.brushes[optId], 'select');
-    } else if (state.activeToolId === 'fill') {
-      state.fillModeId = optId;
-      FP.playSound('toolSelect');
     } else if (state.activeToolId === 'shape') {
       state.shapeId = optId;
       FP.playSound('toolSelect');
@@ -967,6 +957,8 @@
       changeSize(+1);
     } else if (t.kind === 'sizeDown') {
       changeSize(-1);
+    } else if (t.kind === 'bgFill') {
+      handleBgFillTap();
     }
     // sizeIndicator is non-interactive
   }
@@ -996,6 +988,9 @@
     renderAll();
   }
 
+  // Fills the page background with the active color — and nothing else.
+  // (The historical auto-flip to the neighbor color is gone: it made the
+  // button feel unpredictable once it moved into the main tool row.)
   function handleBgFillTap() {
     const onColoringPage = !!state.currentColoringPageId;
     // On a coloring page: fill the solid-bg layer (the outline + overlay layers
@@ -1004,13 +999,6 @@
     if (!onColoringPage) _leavingColoringPage();
     const c = state.palette[state.activeColorIdx];
     canvasComp.fillBackground(c);
-    // Auto-switch to opposite column color (flip LSB) for drawing contrast —
-    // but keep Rainbow selected so a rainbow fill flows straight into rainbow
-    // drawing (flipping to a solid neighbour would break the combo).
-    if (!FP.rainbow.isRainbow(c)) {
-      state.activeColorIdx = state.activeColorIdx ^ 1;
-      canvasComp.setColor(state.palette[state.activeColorIdx]);
-    }
     if (onColoringPage) {
       autosaveCurrentColoringPage();
     } else {

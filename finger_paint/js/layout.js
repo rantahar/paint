@@ -81,15 +81,16 @@ FP.primaryTools = [
   { id: 'sizeUp',        kind: 'sizeUp'        },
   { id: 'sizeIndicator', kind: 'sizeIndicator' },
   { id: 'sizeDown',      kind: 'sizeDown'      },
+  { id: 'bgFill',        kind: 'bgFill'        },
 ];
 
 /* The OPTIONS line contents per primary tool. Draw options are brush ids
-   (line styles); fill options are fill modes; shape options come from the
-   shapes registry. An empty list (eraser) leaves the line blank —
-   thickness already covers eraser sizing. */
+   (line styles); shape options come from the shapes registry. An empty
+   list (fill, eraser) leaves the line blank — the bucket needs no modes
+   and thickness already covers eraser sizing. */
 FP.toolOptions = {
   draw:   ['marker', 'watercolor', 'crayon', 'dash', 'dot'],
-  fill:   ['bucket', 'page'],
+  fill:   [],
   shape:  (window.FP.shapes ? FP.shapes.ORDER.slice() : []),
   eraser: [],
 };
