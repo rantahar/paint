@@ -242,7 +242,11 @@ FP.pagePicker = (function () {
       bgColor = (autosave && autosave.bgColor) || '#ffffff';
     }
     if (_previewBgColor) bgColor = _previewBgColor;
-    btn.style.backgroundColor = bgColor;
+    if (FP.rainbow && FP.rainbow.isRainbow(bgColor)) {
+      btn.style.background = FP.rainbow.cssGradient();
+    } else {
+      btn.style.backgroundColor = bgColor;
+    }
 
     if (page.isBlank) {
       // Bg color is the entire tile.

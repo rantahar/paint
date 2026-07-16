@@ -21,8 +21,8 @@
     'blue',        'darkturquoise',
     'blueviolet',  'indigo',
     '#444444',     '#bbbbbb',
-    '#111111',     '#f5f5f5',
-  ];
+    '#111111',     FP.RAINBOW,   // rainbow replaces the near-white swatch
+  ];                             // (near-white duplicated the white paper)
 
   const LIGHT_COLORS = new Set([
     'yellow', 'wheat', '#f5f5f5', '#bbbbbb', 'yellowgreen',
@@ -439,6 +439,7 @@
     if (bgMode) {
       layout.colors.forEach(s => {
         const color = state.palette[s.idx];
+        const isRainbow = FP.rainbow.isRainbow(color);
         const onTap = pickerOpen
           ? () => handleBgColorPickerTap(s.idx)
           : () => handlePageBgDirectTap(s.idx);
@@ -446,21 +447,28 @@
           x: s.x, y: s.y, size: layout.B,
           bg: '#f5f3ee',              // matches #app background
           onTap,
-          innerHTML: FP.pageFanIcon(color, layout.B * 0.7),
-          ariaLabel: `Page background color ${s.idx + 1}`,
+          innerHTML: isRainbow
+            ? FP.pageFanMulticolorIcon(layout.B * 0.7)
+            : FP.pageFanIcon(color, layout.B * 0.7),
+          ariaLabel: isRainbow ? 'Rainbow page background' : `Page background color ${s.idx + 1}`,
         });
       });
       return;
     }
     layout.colors.forEach(s => {
       const color = state.palette[s.idx];
+      const isRainbow = FP.rainbow.isRainbow(color);
       const isActive = s.idx === state.activeColorIdx;
       const btn = makeBtn({
         x: s.x, y: s.y, size: layout.B,
-        bg: color, color, active: isActive,
+        // Rainbow swatch shows a colour wheel; pass color:null so it isn't
+        // treated as a solid (light-colour) swatch.
+        bg: isRainbow ? FP.rainbow.cssGradient() : color,
+        color: isRainbow ? null : color,
+        active: isActive,
         isColorSwatch: true,
         onTap: () => handleColorTap(s.idx),
-        ariaLabel: `Color ${s.idx + 1}`,
+        ariaLabel: isRainbow ? 'Rainbow' : `Color ${s.idx + 1}`,
       });
       if (isActive) {
         btn.insertAdjacentHTML('beforeend', FP.activeMark(layout.B));
@@ -918,9 +926,13 @@
     if (!onColoringPage) _leavingColoringPage();
     const c = state.palette[state.activeColorIdx];
     canvasComp.fillBackground(c);
-    // Auto-switch to opposite column color (flip LSB)
-    state.activeColorIdx = state.activeColorIdx ^ 1;
-    canvasComp.setColor(state.palette[state.activeColorIdx]);
+    // Auto-switch to opposite column color (flip LSB) for drawing contrast —
+    // but keep Rainbow selected so a rainbow fill flows straight into rainbow
+    // drawing (flipping to a solid neighbour would break the combo).
+    if (!FP.rainbow.isRainbow(c)) {
+      state.activeColorIdx = state.activeColorIdx ^ 1;
+      canvasComp.setColor(state.palette[state.activeColorIdx]);
+    }
     if (onColoringPage) {
       autosaveCurrentColoringPage();
     } else {

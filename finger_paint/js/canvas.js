@@ -85,6 +85,7 @@ FP.PaintingCanvas = class {
 
     // Initial white paper
     this._currentBgColor = '#ffffff';
+    this._rainbowScale   = null;   // brush size captured at rainbow-fill time
     this._fillBg(this._currentBgColor);
     // Wrap stays TRANSPARENT — the page bg color is painted onto bgCanvas
     // inside the painting element only, so it never extends past the page's
@@ -227,6 +228,9 @@ FP.PaintingCanvas = class {
   fillBackground(color) {
     const hasPage = this._pageWidth !== null && this._pageHeight !== null;
     this._currentBgColor = color;
+    // Capture the brush size at fill time so the band scale stays stable if
+    // the canvas later expands (drawing taller than the viewport).
+    if (FP.rainbow.isRainbow(color)) this._rainbowScale = this.size;
     if (!hasPage) {
       this._bgImageH = 0;                  // solid fill — no image-based extent
       this.setPageDimensions(null, null);  // clear page dimensions
@@ -662,9 +666,16 @@ FP.PaintingCanvas = class {
     if (!pt) return;
 
     const opts = { color: this.color, size: this.size };
+    // Rainbow paint: the color isn't fixed — it advances through the spectrum
+    // as the finger travels. We seed the first segment's hue here and track a
+    // per-stroke distance accumulator (rbDist) so _onMove can re-colour each
+    // segment. Brushes stay colour-agnostic; they just read opts.color.
+    const rainbow = FP.rainbow.isRainbow(this.color);
+    if (rainbow) opts.color = FP.rainbow.strokeColor(0, this.size);
     const state = this.brush.beginStroke(this.drawCtx, pt, opts);
     this.activeStrokes.set(e.pointerId, {
       brush: this.brush, state, opts,
+      rainbow, rbDist: 0, rbLast: { x: pt.x, y: pt.y }, rbSize: this.size,
     });
     this._setDirty(true);
 
@@ -698,6 +709,14 @@ FP.PaintingCanvas = class {
     for (const ev of events) {
       const pt = this._eventToCanvas(ev);
       if (!pt) continue;
+      if (stroke.rainbow) {
+        // Advance the hue by how far this segment moved, then hand the brush
+        // the current colour. Each brush reads opts.color fresh per segment.
+        stroke.rbDist += Math.hypot(pt.x - stroke.rbLast.x, pt.y - stroke.rbLast.y);
+        stroke.rbLast.x = pt.x;
+        stroke.rbLast.y = pt.y;
+        stroke.opts.color = FP.rainbow.strokeColor(stroke.rbDist, stroke.rbSize);
+      }
       stroke.brush.continueStroke(this.drawCtx, stroke.state, pt, stroke.opts);
     }
     FP.playBrushSound(stroke.brush, 'move');
@@ -742,6 +761,14 @@ FP.PaintingCanvas = class {
   }
 
   _fillBg(color) {
+    if (FP.rainbow.isRainbow(color)) {
+      // Rainbow background — bands scaled by the brush size captured at fill
+      // time (falling back to the live size, e.g. when a saved 'rainbow' bg
+      // is reloaded and no scale was stored).
+      const period = FP.rainbow.fillPeriod(this._rainbowScale || this.size);
+      FP.rainbow.paintFill(this.bgCtx, PAINTING_W, this._paintingH, period);
+      return;
+    }
     this.bgCtx.save();
     this.bgCtx.fillStyle = color;
     this.bgCtx.fillRect(0, 0, PAINTING_W, this._paintingH);
@@ -774,11 +801,17 @@ FP.PaintingCanvas = class {
     this.bgCtx.drawImage(snapBg,    0, 0);
     this.drawCtx.drawImage(snapDraw, 0, 0);
 
-    // Fill the new area below old content with current bg color
-    this.bgCtx.save();
-    this.bgCtx.fillStyle = this._currentBgColor;
-    this.bgCtx.fillRect(0, oldH, PAINTING_W, newH - oldH);
-    this.bgCtx.restore();
+    // Fill the new area below old content with current bg color. A rainbow
+    // fill can't be extended with a flat fillRect, so repaint the whole bg
+    // (cheap) — the band scale is preserved via _rainbowScale.
+    if (FP.rainbow.isRainbow(this._currentBgColor)) {
+      this._fillBg(this._currentBgColor);
+    } else {
+      this.bgCtx.save();
+      this.bgCtx.fillStyle = this._currentBgColor;
+      this.bgCtx.fillRect(0, oldH, PAINTING_W, newH - oldH);
+      this.bgCtx.restore();
+    }
 
     // Outline + overlay are derived from cached bitmaps — re-blit cleanly.
     this._blitOutline();
