@@ -46,7 +46,10 @@
       };
     },
 
-    continueStroke(ctx, state, pt /*, opts */) {
+    continueStroke(ctx, state, pt, opts) {
+      // Refresh from opts so rainbow paint (which re-colours each segment)
+      // takes effect — for a solid colour this is a harmless no-op.
+      if (opts && opts.color) state.color = opts.color;
       // Interpolate stamps along the segment so fast moves stay continuous
       const dx = pt.x - state.last.x;
       const dy = pt.y - state.last.y;
