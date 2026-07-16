@@ -599,8 +599,7 @@ FP.PaintingCanvas = class {
   /** Cancel all active strokes immediately (for interrupt cases like clear mid-draw). */
   _cancelActiveStrokes() {
     for (const [pointerId, stroke] of this.activeStrokes) {
-      const pt = { x: 0, y: 0 };
-      stroke.brush.endStroke(this.drawCtx, stroke.state, pt, stroke.opts);
+      this._endStroke(stroke, { x: 0, y: 0 });
       try { this.drawCanvas.releasePointerCapture(pointerId); } catch (_) {}
     }
     this.activeStrokes.clear();
@@ -654,6 +653,76 @@ FP.PaintingCanvas = class {
     el.classList.remove(classes.in);
   }
 
+  // ── Rainbow band strokes ────────────────────────────────────
+  // Rainbow drawing runs N parallel sub-strokes ("bands"), one per rainbow
+  // colour, offset sideways from the finger along the stroke's normal. The
+  // colours run ACROSS the stroke — red on the outer edge of a left-to-right
+  // arch — so drawing an arc paints an actual rainbow. The bands tile the
+  // same 2×size footprint as a normal stroke; each colour gets size/N.
+  // Works with any brush: each band is just an ordinary brush stroke.
+  _beginRainbowStroke(pt) {
+    const colors   = FP.rainbow.bandColors();
+    const n        = colors.length;
+    const bandSize = this.size / n;
+    const normal   = { x: 0, y: -1 };        // default until travel direction known
+    const bands = colors.map((color, i) => {
+      const off  = FP.rainbow.bandOffset(i, n, this.size);
+      const opts = { color, size: bandSize };
+      const bpt  = { x: pt.x + normal.x * off, y: pt.y + normal.y * off,
+                     pressure: pt.pressure };
+      return { opts, off, state: this.brush.beginStroke(this.drawCtx, bpt, opts) };
+    });
+    return {
+      brush: this.brush, rainbow: true, bands,
+      rbLast: { x: pt.x, y: pt.y }, rbNormal: normal, rbHasDir: false,
+    };
+  }
+
+  _continueRainbowStroke(stroke, pt) {
+    const dx = pt.x - stroke.rbLast.x;
+    const dy = pt.y - stroke.rbLast.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.5) return;
+    // Normal = perpendicular of the travel direction, exponentially smoothed
+    // so hand jitter doesn't make the bands wobble. (dy,-dx) points to the
+    // OUTSIDE of a left-to-right arch, which puts red on the outer edge —
+    // matching a real rainbow when drawn the natural way.
+    const nx = dy / dist, ny = -dx / dist;
+    let sx, sy;
+    if (!stroke.rbHasDir) {
+      // First real segment: snap to the actual direction instead of easing
+      // in from the default normal — avoids a twist at the stroke start.
+      sx = nx; sy = ny;
+      stroke.rbHasDir = true;
+    } else {
+      const k = 0.35;
+      sx = stroke.rbNormal.x * (1 - k) + nx * k;
+      sy = stroke.rbNormal.y * (1 - k) + ny * k;
+      const m = Math.hypot(sx, sy);
+      if (m > 0.001) { sx /= m; sy /= m; } else { sx = nx; sy = ny; }
+    }
+    stroke.rbNormal.x = sx;
+    stroke.rbNormal.y = sy;
+    for (const band of stroke.bands) {
+      const bpt = { x: pt.x + sx * band.off, y: pt.y + sy * band.off,
+                    pressure: pt.pressure };
+      stroke.brush.continueStroke(this.drawCtx, band.state, bpt, band.opts);
+    }
+    stroke.rbLast.x = pt.x;
+    stroke.rbLast.y = pt.y;
+  }
+
+  // End every sub-stroke of `stroke` (one for plain strokes, N for rainbow).
+  _endStroke(stroke, pt) {
+    if (stroke.rainbow) {
+      for (const band of stroke.bands) {
+        stroke.brush.endStroke(this.drawCtx, band.state, pt, band.opts);
+      }
+    } else {
+      stroke.brush.endStroke(this.drawCtx, stroke.state, pt, stroke.opts);
+    }
+  }
+
   // ── Pointer handlers ────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
@@ -665,18 +734,19 @@ FP.PaintingCanvas = class {
     const pt = this._eventToCanvas(e);
     if (!pt) return;
 
-    const opts = { color: this.color, size: this.size };
-    // Rainbow paint: the color isn't fixed — it advances through the spectrum
-    // as the finger travels. We seed the first segment's hue here and track a
-    // per-stroke distance accumulator (rbDist) so _onMove can re-colour each
-    // segment. Brushes stay colour-agnostic; they just read opts.color.
-    const rainbow = FP.rainbow.isRainbow(this.color);
-    if (rainbow) opts.color = FP.rainbow.strokeColor(0, this.size);
-    const state = this.brush.beginStroke(this.drawCtx, pt, opts);
-    this.activeStrokes.set(e.pointerId, {
-      brush: this.brush, state, opts,
-      rainbow, rbDist: 0, rbLast: { x: pt.x, y: pt.y }, rbSize: this.size,
-    });
+    // Rainbow paint: not one stroke but a fan of parallel band sub-strokes
+    // (see _beginRainbowStroke). The eraser ignores colour entirely, so it
+    // always takes the plain single-stroke path.
+    const rainbow = FP.rainbow.isRainbow(this.color) && this.brush.id !== 'eraser';
+    let stroke;
+    if (rainbow) {
+      stroke = this._beginRainbowStroke(pt);
+    } else {
+      const opts = { color: this.color, size: this.size };
+      const state = this.brush.beginStroke(this.drawCtx, pt, opts);
+      stroke = { brush: this.brush, state, opts };
+    }
+    this.activeStrokes.set(e.pointerId, stroke);
     this._setDirty(true);
 
     FP.playBrushSound(this.brush, 'touchStart');
@@ -710,14 +780,10 @@ FP.PaintingCanvas = class {
       const pt = this._eventToCanvas(ev);
       if (!pt) continue;
       if (stroke.rainbow) {
-        // Advance the hue by how far this segment moved, then hand the brush
-        // the current colour. Each brush reads opts.color fresh per segment.
-        stroke.rbDist += Math.hypot(pt.x - stroke.rbLast.x, pt.y - stroke.rbLast.y);
-        stroke.rbLast.x = pt.x;
-        stroke.rbLast.y = pt.y;
-        stroke.opts.color = FP.rainbow.strokeColor(stroke.rbDist, stroke.rbSize);
+        this._continueRainbowStroke(stroke, pt);
+      } else {
+        stroke.brush.continueStroke(this.drawCtx, stroke.state, pt, stroke.opts);
       }
-      stroke.brush.continueStroke(this.drawCtx, stroke.state, pt, stroke.opts);
     }
     FP.playBrushSound(stroke.brush, 'move');
   }
@@ -734,7 +800,7 @@ FP.PaintingCanvas = class {
     e.preventDefault();
 
     const pt = this._eventToCanvas(e) || { x: 0, y: 0 };
-    stroke.brush.endStroke(this.drawCtx, stroke.state, pt, stroke.opts);
+    this._endStroke(stroke, pt);
     this.activeStrokes.delete(e.pointerId);
     try { this.drawCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
 

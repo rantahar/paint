@@ -20,9 +20,9 @@
     'forestgreen', 'yellowgreen',
     'blue',        'darkturquoise',
     'blueviolet',  'indigo',
-    '#444444',     '#bbbbbb',
-    '#111111',     FP.RAINBOW,   // rainbow replaces the near-white swatch
-  ];                             // (near-white duplicated the white paper)
+    '#444444',     FP.RAINBOW,   // rainbow replaces the light-grey swatch
+    '#111111',     '#f5f5f5',    // (near-white stays — it's how you get a
+  ];                             //  white-ish background back after a fill)
 
   const LIGHT_COLORS = new Set([
     'yellow', 'wheat', '#f5f5f5', '#bbbbbb', 'yellowgreen',
