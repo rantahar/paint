@@ -6,10 +6,11 @@ A simple, touch-friendly drawing app with multiple brushes, colors, and drawing 
 
 - **Four brush types**: marker, watercolor, crayon, eraser
 - **15 colors plus Rainbow** to choose from with visual color picker
-- **Rainbow paint** — a single swatch that works with every tool: draw
-  rainbow lines or fill a rainbow background. Brush thickness sets the width
-  of the colour bands (thin = tight bands, thick = wide gradient), so one
-  swatch and the size slider combine into many different effects.
+- **Rainbow paint** — a single swatch that works with every tool. Drawing
+  lays the classic colours in parallel bands across the stroke — draw an
+  arc and you get an actual rainbow. Filling paints a rainbow background.
+  Brush thickness scales the rainbow's width (strokes) and the band width
+  (fills), so one swatch and the size slider combine into many effects.
 - **Adjustable brush size** with visual indicator
 - **Background fill** with solid colors, rainbow, or uploaded images
 - **Save & load drawings** stored in browser localStorage
