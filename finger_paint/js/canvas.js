@@ -111,13 +111,11 @@ FP.PaintingCanvas = class {
     this.onStrokeEnd   = null;        // callback fires when the last active stroke ends
 
     // Input mode — what a pointer gesture on the canvas does:
-    //   'brush'    → paint strokes with this.brush (default)
-    //   'shape'    → drag out a premade shape (this.shapeId)
-    //   'bucket'   → tap flood-fills the tapped region
-    //   'pageFill' → tap fills the whole page bg (app handles via callback)
+    //   'brush'  → paint strokes with this.brush (default)
+    //   'shape'  → drag out a premade shape (this.shapeId)
+    //   'bucket' → tap flood-fills the tapped region
     this.inputMode = 'brush';
     this.shapeId   = 'circle';
-    this.onPageFillTap = null;        // app callback for 'pageFill' taps
     this._shapeGestures = new Map();  // pointerId → { cx, cy, r, angle }
 
     // Coloring page dimensions (aspect ratio aware scaling)
@@ -902,11 +900,7 @@ FP.PaintingCanvas = class {
   _onDown(e) {
     e.preventDefault();
 
-    // Tap-action modes first — they don't start strokes.
-    if (this.inputMode === 'pageFill') {
-      if (this.onPageFillTap) this.onPageFillTap();
-      return;
-    }
+    // Tap-action mode first — it doesn't start a stroke.
     if (this.inputMode === 'bucket') {
       const pt = this._eventToCanvas(e);
       if (pt) this._bucketFillAt(pt);

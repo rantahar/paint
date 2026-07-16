@@ -8,11 +8,12 @@ A simple, touch-friendly drawing app with multiple brushes, colors, and drawing 
   **Shape**, **Eraser** — plus the thickness controls; the second line is
   dynamic and shows the active tool's options:
   - **Draw** → line styles: marker, watercolor, crayon, dashed, dotted
-  - **Fill** → fill an area (tap flood-fills the region you touch) or fill
-    the whole page background
+  - **Fill** → tap flood-fills the region you touch
   - **Shape** → circle, square, triangle, star, heart, flower, moon —
     press to place, drag to size *and rotate*, plain tap stamps; the
     outline width is the brush thickness
+  - a **background color** button rounds out the first line: one tap
+    fills the page background with the active color
 - **15 colors plus Rainbow** to choose from with visual color picker
 - **Rainbow paint** — a single swatch that composes with every tool. Drawing
   lays the classic colours in parallel bands across the stroke — draw an
