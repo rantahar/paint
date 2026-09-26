@@ -1,7 +1,6 @@
 {
   "books": [
   { "id": "animals", "name": "Animals", "manifest": "books/animals/manifest.json", "pageCount": 102 },
-  { "id": "dungeons-and-dragons", "name": "Dungeons And Dragons", "manifest": "books/dungeons-and-dragons/manifest.json", "pageCount": 34 },
   { "id": "garden", "name": "Garden", "manifest": "books/garden/manifest.json", "pageCount": 30 },
   { "id": "insects", "name": "Insects", "manifest": "books/insects/manifest.json", "pageCount": 30 },
   { "id": "woodland-critters", "name": "Woodland Critters", "manifest": "books/woodland-critters/manifest.json", "pageCount": 30 }
