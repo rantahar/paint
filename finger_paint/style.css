@@ -277,7 +277,9 @@ body.dialog-open .btn {
 }
 
 /* Tiles use the same .btn.thumb image sizing already defined above. The grid
-   itself is positioned absolutely by JS, one tile per (B × B) slot. */
+   itself is positioned absolutely by JS, one tile per slot — tiles are
+   ~1.5× the regular button size (layout.pickerTileSize) so page previews
+   are easier to see. */
 .page-picker-grid {
   position: absolute;
   z-index: 5;

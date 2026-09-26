@@ -16,7 +16,8 @@
      - Backdrop (.page-picker-backdrop) covers the full window at
        z-index 3 (below regular .btn, above canvas + frame border).
      - Grid (.page-picker-grid) is positioned inside layout.canvas
-       and fills it with B × B tiles separated by G px.
+       and fills it with pickerTileSize × pickerTileSize tiles (about
+       1.5× a regular button) separated by G px.
      - The drawing-tools bar (rightmost column landscape / top row
        portrait) is replaced contextually by prev / X-of-Y / next
        buttons while the picker is open (rendered by app.js, not
@@ -135,22 +136,22 @@ FP.pagePicker = (function () {
       appRoot.appendChild(_rootEl);
     }
 
-    // Position the panel to wrap the grid with G/2 padding. Use exact slot
-    // positions (pickerSlotXY) so panel edges line up with the tile grid
+    // Position the panel to wrap the grid with G/2 padding. Use exact tile
+    // positions (pickerTileXY) so panel edges line up with the tile grid
     // without float drift from pickerGridRect's width/height arithmetic.
     const panel = _rootEl.querySelector('.page-picker-panel');
     if (panel) {
-      const B = layout.B;
+      const T = layout.pickerTileSize;
       const halfG = layout.G / 2;
-      const first = layout.pickerSlotXY(0, 0);
-      const last  = layout.pickerSlotXY(
-        layout.pickerGridCols - 1,
-        layout.pickerGridRows - 1);
+      const first = layout.pickerTileXY(0, 0);
+      const last  = layout.pickerTileXY(
+        layout.pickerTileCols - 1,
+        layout.pickerTileRows - 1);
       Object.assign(panel.style, {
         left:   (first.x - halfG) + 'px',
         top:    (first.y - halfG) + 'px',
-        width:  (last.x + B + halfG - (first.x - halfG)) + 'px',
-        height: (last.y + B + halfG - (first.y - halfG)) + 'px',
+        width:  (last.x + T + halfG - (first.x - halfG)) + 'px',
+        height: (last.y + T + halfG - (first.y - halfG)) + 'px',
       });
     }
 
@@ -176,14 +177,16 @@ FP.pagePicker = (function () {
     const grid = document.createElement('div');
     grid.className = 'page-picker-grid';
     // The grid is a wrapper for stacking-order purposes. Tile positions
-    // come straight from layout.pickerSlotXY (absolute window coords) so
-    // they share the SAME coordinate space as the rest of the button grid
-    // — no float drift from compounding (col * (B + G)) locally.
+    // come straight from layout.pickerTileXY (absolute window coords) so
+    // they share the SAME coordinate space as the rest of the layout — no
+    // float drift from compounding (col * (B + G)) locally. Tiles are
+    // ~1.5× the regular button size (layout.pickerTileSize) so previews
+    // are easy to see.
     Object.assign(grid.style, { left: '0', top: '0', width: '100%', height: '100%' });
 
-    const B = layout.B;
-    const cols = layout.pickerGridCols;
-    const rows = layout.pickerGridRows;
+    const B = layout.pickerTileSize;
+    const cols = layout.pickerTileCols;
+    const rows = layout.pickerTileRows;
     const perGridPage = cols * rows;
     const totalGridPages = Math.max(1, Math.ceil(pages.length / perGridPage));
     if (_scrollOffset >= totalGridPages) _scrollOffset = totalGridPages - 1;
@@ -198,7 +201,7 @@ FP.pagePicker = (function () {
       const j = i - start;
       const row = Math.floor(j / cols);
       const col = j % cols;
-      const { x, y } = layout.pickerSlotXY(col, row);
+      const { x, y } = layout.pickerTileXY(col, row);
       const tile = _buildTile(page, x, y, B, loadedId, isCrayon);
       grid.appendChild(tile);
     }
@@ -270,7 +273,7 @@ FP.pagePicker = (function () {
         btn.appendChild(img);
       } else {
         FP.coloringBook.loadImage(page).then((image) => {
-          const dataUrl = FP.PaintingCanvas.generateTransparentThumbnailFromImage(image, 160);
+          const dataUrl = FP.PaintingCanvas.generateTransparentThumbnailFromImage(image, 256);
           const img = document.createElement('img');
           img.src = dataUrl;
           img.alt = '';
@@ -312,7 +315,7 @@ FP.pagePicker = (function () {
   /** Total grid-page count for the current book (used by chrome for X/Y indicator). */
   function getGridPageCount(layout, pages) {
     if (!pages || pages.length === 0) return 1;
-    const perGridPage = layout.pickerGridCols * layout.pickerGridRows;
+    const perGridPage = layout.pickerTileCols * layout.pickerTileRows;
     return Math.max(1, Math.ceil(pages.length / perGridPage));
   }
 

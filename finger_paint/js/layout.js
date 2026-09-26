@@ -172,19 +172,21 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
   // LEFT of the tools column so the picker chrome (right-column middle row)
   // stays visible regardless of variant.
   //
-  // pickerGridCols / pickerGridRows are exact INTEGER counts (not derived
-  // from width/(B+G) which drifts under float rounding). pickerSlotXY(col,
-  // row) returns the absolute pixel position for tile (col, row) using the
-  // layout's own colX/rowY — bypassing any float compounding the picker
-  // would otherwise do internally.
+  // Picker tiles are LARGER than regular buttons (~1.5× linear) so page
+  // previews are easy to make out; fewer tiles fit per grid-page and the
+  // picker paginates through them. pickerTileCols / pickerTileRows are
+  // exact INTEGER counts; pickerTileXY(col, row) returns the absolute
+  // pixel position for tile (col, row) from the rect origin so the picker
+  // does no float compounding of its own.
   const pickerGridRect = {
     left:   colX(2),
     top:    rowY(0),
     width:  colX(numCols - 1) - G - colX(2),
     height: rowY(8) - G - rowY(0),
   };
-  const pickerGridCols = numCols - 3;   // slots 2..numCols-2
-  const pickerGridRows = 8;             // rows 0..7 (above strip)
+  const pickerTileSize = Math.round(B * 1.5);
+  const pickerTileCols = Math.max(1, Math.floor((pickerGridRect.width  + G) / (pickerTileSize + G)));
+  const pickerTileRows = Math.max(1, Math.floor((pickerGridRect.height + G) / (pickerTileSize + G)));
 
   // Page-picker chrome (prev/indicator/next) lives at fixed slots independent
   // of FP.toolOrder so that Crayon (toolOrder = []) still has somewhere to
@@ -205,8 +207,13 @@ function _landscape(frameW, frameH/*, nSaved (unused — no more saved strip) */
     bookshelfSlotCount: numCols,
     bookshelfSlotXY(slot) { return { x: colX(slot), y: stripY }; },
     bookshelfRowRect: { left: 0, top: stripY, width: frameW, height: B },
-    pickerGridRect, pickerGridCols, pickerGridRows,
-    pickerSlotXY(col, row) { return { x: colX(2 + col), y: rowY(row) }; },
+    pickerGridRect, pickerTileSize, pickerTileCols, pickerTileRows,
+    pickerTileXY(col, row) {
+      return {
+        x: pickerGridRect.left + col * (pickerTileSize + G),
+        y: pickerGridRect.top  + row * (pickerTileSize + G),
+      };
+    },
     pickerChromePrevXY, pickerChromeMidXY, pickerChromeNextXY,
   };
 }
@@ -287,17 +294,18 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
   // BELOW the top tool row so the picker chrome (top-middle) stays visible
   // regardless of variant.
   //
-  // pickerGridCols / pickerGridRows are exact INTEGER counts (see landscape
-  // comments). pickerSlotXY uses colX/rowY so positions match the rest of
-  // the button grid without float compounding.
+  // Picker tiles are ~1.5× the button size (see landscape comments) so
+  // previews read clearly; integer col/row counts, positions from the rect
+  // origin via pickerTileXY.
   const pickerGridRect = {
     left:   colX(0),
     top:    rowY(1),
     width:  colX(8) - G - colX(0),
     height: primaryRowY - G - rowY(1),
   };
-  const pickerGridCols = 8;             // cols 0..7
-  const pickerGridRows = numRows - 3;   // rows 1..numRows-3
+  const pickerTileSize = Math.round(B * 1.5);
+  const pickerTileCols = Math.max(1, Math.floor((pickerGridRect.width  + G) / (pickerTileSize + G)));
+  const pickerTileRows = Math.max(1, Math.floor((pickerGridRect.height + G) / (pickerTileSize + G)));
 
   // Picker chrome positions (see landscape comments). Portrait: top row,
   // cols 3/4/5 — Crayon's single button uses colX(4), top-middle.
@@ -317,8 +325,13 @@ function _portrait(frameW, frameH/*, nSaved (unused) */) {
     // slot 0 = bottom of strip → newer-to-older feels right
     bookshelfSlotXY(slot) { return { x: stripX, y: rowY(numRows - 1 - slot) }; },
     bookshelfRowRect: { left: stripX, top: 0, width: B, height: frameH },
-    pickerGridRect, pickerGridCols, pickerGridRows,
-    pickerSlotXY(col, row) { return { x: colX(col), y: rowY(1 + row) }; },
+    pickerGridRect, pickerTileSize, pickerTileCols, pickerTileRows,
+    pickerTileXY(col, row) {
+      return {
+        x: pickerGridRect.left + col * (pickerTileSize + G),
+        y: pickerGridRect.top  + row * (pickerTileSize + G),
+      };
+    },
     pickerChromePrevXY, pickerChromeMidXY, pickerChromeNextXY,
   };
 }

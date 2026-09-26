@@ -5,7 +5,7 @@
      { id: '<uuid>', t: <unix-ms>,
        bgColor: '<hex>',       // background color (solid fill)
        draw:    '<dataURL>',   // transparent strokes / overlay layer (may be null)
-       thumb:   '<dataURL>' }  // small transparent preview (~160px)
+       thumb:   '<dataURL>' }  // small transparent preview (~256px)
 
    On init(), entries from the old v2 shape (which used a `bg`/`png`
    dataURL instead of `bgColor`) are migrated in-place: the bg's
@@ -272,7 +272,7 @@ async function _migrateToV3(entry) {
     try {
       const drawImg = await _loadImg(entry.draw);
       const t = document.createElement('canvas');
-      const size = 160;
+      const size = 256;
       t.width = t.height = size;
       const tx = t.getContext('2d');
       tx.drawImage(drawImg, 0, 0, drawImg.naturalWidth, drawImg.naturalHeight,

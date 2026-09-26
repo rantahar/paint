@@ -167,6 +167,13 @@
     // armed by the FIRST stroke in a session — subsequent strokes would
     // sit unsaved until the visibilitychange flush, racing the page kill.
     canvasComp.onStrokeEnd = () => autosaveCurrentWork();
+    // Undo availability changed (snapshot pushed, undo consumed, or history
+    // reset by a load/clear) — refresh the toolbar so the eraser row's Undo
+    // button picks up its enabled/disabled look. Only re-render when that
+    // button can actually be on screen (eraser tool active).
+    canvasComp.onHistoryChange = () => {
+      if (state.activeToolId === 'eraser') renderAll();
+    };
     canvasComp.setColor(state.palette[state.activeColorIdx]);
     canvasComp.setSize(SIZE_LEVELS[state.sizeIdx]);
     applyToolMode();
@@ -562,9 +569,23 @@
     });
 
     // OPTIONS line: dynamic per active tool (line styles / fill modes /
-    // shapes; empty for the eraser). Skipped entirely when the variant has
+    // shapes; Undo for the eraser). Skipped entirely when the variant has
     // no tools.
     if (layout.tools.length === 0) return;
+
+    // Eraser has no line-style options — its options line offers Undo
+    // instead. Greyed out (via .disabled) when there's nothing to undo.
+    if (state.activeToolId === 'eraser') {
+      const pos = layout.optionSlotXY(0);
+      makeBtn({
+        x: pos.x, y: pos.y, size: layout.B,
+        onTap: handleUndoTap,
+        innerHTML: FP.icon('undo', layout.B * 0.44),
+        ariaLabel: 'Undo',
+        disabled: !canvasComp.canUndo(),
+      });
+    }
+
     const options = FP.toolOptions[state.activeToolId] || [];
     options.slice(0, layout.optionSlotCount).forEach((optId, i) => {
       const pos = layout.optionSlotXY(i);
@@ -604,6 +625,16 @@
       canvasComp.setInputMode('shape');
       canvasComp.setShape(state.shapeId);
     }
+  }
+
+  // Undo button (eraser options line): restore the previous canvas state.
+  // Runs the restored state through the same autosave path as any other
+  // change so the stored mirror (and per-page autosave) match the screen.
+  function handleUndoTap() {
+    if (!canvasComp.undo()) return;   // history exhausted — nothing to do
+    onCanvasContentChanged();
+    autosaveCurrentWork({ immediate: true });
+    renderAll();
   }
 
   function handleOptionTap(optId) {
@@ -1609,6 +1640,9 @@
     }, PAGE_FLIP_ANIMATION, () => {
       renderAll();
     });
+    // The bg fill above is part of the LOAD, not a user action — collapse
+    // the fillBackground snapshot so the loaded state is the undo baseline.
+    canvasComp.resetUndoHistory();
     autosaveCurrentWork({ immediate: true });
   }
 

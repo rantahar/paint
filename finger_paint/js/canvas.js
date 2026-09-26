@@ -24,14 +24,16 @@
      • Undo/redo via stroke replay (vs. canvas snapshots)
      • Resolution-independent re-rendering
      • Smaller localStorage footprint for stroke-heavy drawings
-   Simpler interim: snapshot-based undo (one ImageData per stroke,
-   capped ring buffer ≈ 10 entries → ~4-40 MB depending on canvas H).
+   Simpler interim (IMPLEMENTED — see snapshotUndo/undo): snapshot-based
+   undo (one offscreen canvas per completed action, capped ring buffer of
+   UNDO_LIMIT entries → ~4-40 MB depending on canvas H).
    ──────────────────────────────────────────────────────────── */
 window.FP = window.FP || {};
 
 const PAINTING_W      = 1000;  // canonical backing width (painting units)
 const FLIP_HALF_MS    = 220;   // page-flip half-duration (must match CSS keyframes)
 const OVERLAY_OPACITY = 0.5;   // semi-transparent outline overlay (when no custom _overlay.png)
+const UNDO_LIMIT      = 10;    // max states kept in the undo ring buffer
 
 FP.PaintingCanvas = class {
   constructor(wrapEl) {
@@ -110,6 +112,18 @@ FP.PaintingCanvas = class {
     this.onDirtyChange = null;        // callback for app to update Save↔Download button
     this.onStrokeEnd   = null;        // callback fires when the last active stroke ends
 
+    // Undo history — ring buffer of committed states. Each entry captures
+    // the draw-layer pixels (offscreen canvas) + the bg fill color (the bg
+    // layer is fully described by its color, so no bg pixels are stored;
+    // uploaded-image backgrounds reset the history instead — see
+    // setBackgroundImage). The stack top mirrors the CURRENT state, so
+    // undo needs at least 2 entries. Snapshots are pushed at the end of
+    // each completed user action (stroke pointer-up, shape commit, bucket
+    // fill, bg fill); loads/clears reset to a fresh baseline.
+    this._undoStack = [];
+    this._drawChangedSinceSnapshot = false;  // coalescing flag — set on draw-layer mutations
+    this.onHistoryChange = null;             // callback(canUndo) — app updates the Undo button
+
     // Input mode — what a pointer gesture on the canvas does:
     //   'brush'  → paint strokes with this.brush (default)
     //   'shape'  → drag out a premade shape (this.shapeId)
@@ -140,6 +154,83 @@ FP.PaintingCanvas = class {
     dc.addEventListener('lostpointercapture', e => this._onUp(e));
     // contextmenu suppression (long-press on mobile)
     dc.addEventListener('contextmenu', e => e.preventDefault());
+
+    // Baseline undo state (blank white canvas) so the first undo works.
+    this.resetUndoHistory();
+  }
+
+  // ── Undo history ────────────────────────────────────────────
+  /** Capture the current user-mutable state: draw-layer pixels + bg color. */
+  _captureUndoState() {
+    const snap = document.createElement('canvas');
+    snap.width  = PAINTING_W;
+    snap.height = this._paintingH;
+    snap.getContext('2d').drawImage(this.drawCanvas, 0, 0);
+    return {
+      draw:         snap,
+      bgColor:      this._currentBgColor,
+      rainbowScale: this._rainbowScale,
+    };
+  }
+
+  _notifyHistory() {
+    if (this.onHistoryChange) this.onHistoryChange(this.canUndo());
+  }
+
+  /**
+   * Push a snapshot of the current state at the END of a completed user
+   * action. Coalesces: if neither the draw layer nor the bg color changed
+   * since the last snapshot, nothing is pushed. Oldest entries fall off
+   * once the ring buffer holds UNDO_LIMIT states.
+   */
+  snapshotUndo() {
+    const top = this._undoStack[this._undoStack.length - 1];
+    if (top && !this._drawChangedSinceSnapshot &&
+        top.bgColor === this._currentBgColor &&
+        top.rainbowScale === this._rainbowScale) {
+      return;   // nothing changed — don't burn a history slot
+    }
+    this._undoStack.push(this._captureUndoState());
+    while (this._undoStack.length > UNDO_LIMIT) this._undoStack.shift();
+    this._drawChangedSinceSnapshot = false;
+    this._notifyHistory();
+  }
+
+  /**
+   * Drop all history and re-baseline on the current state. Called whenever
+   * a page/drawing is loaded or the canvas is cleared — undo never crosses
+   * a load boundary.
+   */
+  resetUndoHistory() {
+    this._undoStack.length = 0;
+    this._undoStack.push(this._captureUndoState());
+    this._drawChangedSinceSnapshot = false;
+    this._notifyHistory();
+  }
+
+  /** True when there is a previous state to restore. */
+  canUndo() { return this._undoStack.length > 1; }
+
+  /**
+   * Restore the previous state (draw pixels + bg color). Does nothing when
+   * only the baseline remains. Returns true if a state was restored.
+   */
+  undo() {
+    if (this._undoStack.length <= 1) return false;
+    this._undoStack.pop();                                  // discard current state
+    const st = this._undoStack[this._undoStack.length - 1]; // restore the one below
+    this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
+    this.drawCtx.drawImage(st.draw, 0, 0);
+    if (st.bgColor !== this._currentBgColor ||
+        st.rainbowScale !== this._rainbowScale) {
+      this._currentBgColor = st.bgColor;
+      this._rainbowScale   = st.rainbowScale;
+      this._fillBg(st.bgColor);
+    }
+    this._drawChangedSinceSnapshot = false;  // canvas now matches the stack top
+    this._setDirty(true);
+    this._notifyHistory();
+    return true;
   }
 
   // ── Coloring Page Management ────────────────────────────────
@@ -263,6 +354,10 @@ FP.PaintingCanvas = class {
       this.setPageDimensions(null, null);  // clear page dimensions
     }
     this._fillBg(color);
+    // Bg fill is a completed user action — snapshot (coalesced to a no-op
+    // when the color didn't actually change). Load paths that call this as
+    // part of setting up a page re-baseline afterwards anyway.
+    this.snapshotUndo();
   }
 
   getBgColor() { return this._currentBgColor; }
@@ -309,6 +404,9 @@ FP.PaintingCanvas = class {
     this._blitOverlay();
     // Wrap stays transparent — see constructor; the page bg color lives only
     // inside the painting element so it never extends past the page itself.
+    // New page → fresh undo baseline (callers that load strokes after will
+    // re-baseline again via setDrawingFromDataUrl/clearDrawing).
+    this.resetUndoHistory();
   }
 
   /** Legacy: bake an image into bgCanvas (used by uploaded-image and saved-drawing flows). */
@@ -333,6 +431,9 @@ FP.PaintingCanvas = class {
     this._blitOutline();
     this._blitOverlay();
     // Wrap bg unchanged — see constructor. The image lives on bgCanvas.
+    // Uploaded-image backgrounds aren't representable as a bg color in the
+    // undo state, so treat the upload as a load boundary: re-baseline.
+    this.resetUndoHistory();
   }
 
   /**
@@ -431,6 +532,7 @@ FP.PaintingCanvas = class {
       }
       // Wrap bg unchanged — see constructor. bg color lives on bgCanvas only.
       this._setDirty(false);
+      this.resetUndoHistory();
     });
   }
 
@@ -438,6 +540,10 @@ FP.PaintingCanvas = class {
   clearDrawing() {
     this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
     this._setDirty(false);
+    // Clearing is a load-like boundary: history resets, and the cleared
+    // state becomes the new baseline (so the first stroke after a clear
+    // can be undone back to the empty page).
+    this.resetUndoHistory();
   }
 
   /** Load a transparent strokes PNG onto the draw layer (used by coloring-page autosave restore). */
@@ -450,6 +556,7 @@ FP.PaintingCanvas = class {
         this.drawCtx.clearRect(0, 0, PAINTING_W, this._paintingH);
         this.drawCtx.drawImage(im, 0, 0, PAINTING_W, h);
         this._setDirty(false);
+        this.resetUndoHistory();
         resolve();
       };
       im.onerror = reject;
@@ -539,7 +646,7 @@ FP.PaintingCanvas = class {
    * For non-coloring states (blank canvas or saved drawings): just the draw
    * layer (the outline/overlay canvases are empty in that state).
    */
-  toTransparentThumbnailDataURL(size = 160) {
+  toTransparentThumbnailDataURL(size = 256) {
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');
@@ -570,7 +677,7 @@ FP.PaintingCanvas = class {
   }
 
   /** Smaller PNG for thumbnails. Fills square with center alignment (like page scaling). */
-  toThumbnailDataURL(size = 160) {
+  toThumbnailDataURL(size = 256) {
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');
@@ -793,6 +900,7 @@ FP.PaintingCanvas = class {
                      g.cx, g.cy, this._shapeRadius(g), g.angle,
                      this.color, this.size * 2);
     this._setDirty(true);
+    this._drawChangedSinceSnapshot = true;
   }
 
   _clearPreview() {
@@ -889,6 +997,8 @@ FP.PaintingCanvas = class {
 
     this.drawCtx.drawImage(fillCanvas, 0, 0);
     this._setDirty(true);
+    this._drawChangedSinceSnapshot = true;
+    this.snapshotUndo();   // a completed fill tap is one undoable action
     FP.playSound('bgFill');
     if (this.activeStrokes.size === 0 && this._shapeGestures.size === 0 &&
         this.onStrokeEnd) {
@@ -936,6 +1046,7 @@ FP.PaintingCanvas = class {
     }
     this.activeStrokes.set(e.pointerId, stroke);
     this._setDirty(true);
+    this._drawChangedSinceSnapshot = true;
 
     FP.playBrushSound(this.brush, 'touchStart');
   }
@@ -998,6 +1109,7 @@ FP.PaintingCanvas = class {
       this._shapeGestures.delete(e.pointerId);
       this._commitShape(gesture);
       this._redrawShapePreviews();
+      this.snapshotUndo();   // a committed shape drag is one undoable action
       try { this.drawCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
       if (FP && FP.state) FP.state.pointerDownOnButton.delete(e.pointerId);
       if (this._shapeGestures.size === 0 && this.activeStrokes.size === 0 &&
@@ -1023,6 +1135,11 @@ FP.PaintingCanvas = class {
     try { this.drawCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
     FP.playBrushSound(stroke.brush, 'touchEnd');
+
+    // Snapshot at the end of the gesture: when several fingers draw at
+    // once, wait for the LAST pointer-up so the whole multi-touch gesture
+    // is one undo step.
+    if (this.activeStrokes.size === 0) this.snapshotUndo();
 
     // Notify app.js that a stroke just completed — used to re-trigger the
     // current-work autosave debounce so every finished stroke gets a write
@@ -1172,7 +1289,7 @@ FP.PaintingCanvas = class {
    * Static helper: Generate a thumbnail from an image element.
    * Uses aspect-ratio-aware center alignment (fills square with overflow).
    */
-  static generateThumbnailFromImage(image, size = 160) {
+  static generateThumbnailFromImage(image, size = 256) {
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');
@@ -1222,7 +1339,7 @@ FP.PaintingCanvas = class {
    * by the page picker's Layer 3 when no autosave thumb exists yet.
    * Idempotent on already-processed page PNGs.
    */
-  static generateTransparentThumbnailFromImage(image, size = 160) {
+  static generateTransparentThumbnailFromImage(image, size = 256) {
     const out = document.createElement('canvas');
     out.width = out.height = size;
     const ox = out.getContext('2d');

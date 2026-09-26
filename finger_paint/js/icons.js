@@ -75,6 +75,9 @@ FP.icons = {
   reload:      `<polyline points="3 4 3 10 9 10"/>
                 <path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/>`,
 
+  undo:        `<polyline points="9 15 4 10 9 5"/>
+                <path d="M4 10h11a5.5 5.5 0 010 11h-4"/>`,
+
   scrollLeft:  `<polyline points="15 18 9 12 15 6"/>`,
   scrollRight: `<polyline points="9 18 15 12 9 6"/>`,
   scrollUp:    `<polyline points="18 15 12 9 6 15"/>`,
