@@ -1,7 +1,6 @@
 # Robot Maze
 
-Picture-only programming game for kids who can't read yet. Shares styles,
-icons and dialogs with `../finger_paint/`.
+Picture-only programming game for kids who can't read yet. Shares styles with `../finger_paint/`.
 
 - Drag command blocks (bottom) into the 20 program slots (top); tap a block to append it
 - Drag a placed block to another slot to swap, or off the program to remove it
