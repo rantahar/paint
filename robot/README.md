@@ -4,7 +4,7 @@ Picture-only programming game for kids who can't read yet. Shares styles with `.
 
 - Drag command blocks (bottom) into the 20 program slots (top); tap a block to append it
 - Drag a placed block to another slot to swap, or off the program to remove it
-- ▶ runs the slots in order (empty slots skipped); ■ stops; 🏠 resets the robot
+- ▶ runs the slots in order (empty slots skipped); ■ stops; 🏠 resets the robot; 🗑 opens a popup (red ✕ cancel / 🗑 clear program)
 - One square size: robot, walls, fruit, exit each fill 1 square
 - Forward/back = 1 square, jump = 2 squares (over a wall or fruit)
 - Fruit under the robot is collected and counted in the top bar
