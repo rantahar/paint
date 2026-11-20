@@ -1,65 +1,56 @@
 /* ────────────────────────────────────────────────────────────
    robot.js — Robot Maze: a picture-only programming game.
 
-   The world is a grid of square cells; the robot covers 2×2 cells.
+   The world is a grid of robot-sized squares: robot, walls, fruit and
+   exit each take exactly one square.
    The player drags command blocks from the palette (bottom) into the
    20 program slots (top). ▶ runs the slots in order, skipping empty
    ones. Fruits under the robot are collected and counted in the top
    bar; arriving on the 🏁 exit makes the robot spin.
 
-   Movement units (one "square" on the drawn grid = one robot = 2×2 cells;
-   the half-size cells exist only so walls can be thin):
-     forward / back  → 1 square
-     jump            → 2 squares, hopping over whatever is between
+   Movement: forward/back = 1 square, jump = 2 squares (over whatever
+   is between).
    ──────────────────────────────────────────────────────────── */
 (function () {
   'use strict';
 
   const SLOT_COUNT = 20;
-  const STEP = 2;          // cells per forward/back
-  const JUMP = 4;          // cells per jump
+  const STEP = 1;          // squares per forward/back
+  const JUMP = 2;          // squares per jump
   const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];   // up, right, down, left
 
   const FRUITS = { B: '🍌', A: '🍎', C: '🍒', S: '🍓' };
 
-  /* Map legend:  .  empty   #  wall   R  robot start (2×2, faces right)
-                  E  exit (2×2)       B/A/C/S  fruit                     */
+  /* Map legend (one character = one square = one robot):
+       .  empty   #  wall   R  robot start (faces right)   E  exit
+       B/A/C/S  fruit                                                    */
   const LEVELS = [
     [
-      '................',
-      '.RR.....B.......',
-      '.RR.............',
-      '....A.......B...',
-      '................',
-      '........A.......',
-      '..B.............',
-      '.............EE.',
-      '.............EE.',
-      '................',
+      '..........',
+      '.R...B....',
+      '...A......',
+      '.......B..',
+      '..........',
+      '.B...A..E.',
+      '..........',
     ],
     [
-      '................',
-      '.RR.....#.......',
-      '.RR.....#..B....',
-      '........#.......',
-      '..A.....#.......',
-      '................',
-      '....######......',
-      '.............EE.',
-      '...B.........EE.',
-      '................',
+      '..........',
+      '.R..#..B..',
+      '....#.....',
+      '.A..#.....',
+      '..........',
+      '..####..E.',
+      '.B........',
     ],
     [
-      '################',
-      '#RR....B....#..#',
-      '#RR.........#C.#',
-      '#########...#..#',
-      '#.......#...#..#',
-      '#.A.....#...#..#',
-      '#...#####...#..#',
-      '#EE...........S#',
-      '#EE............#',
-      '################',
+      'R...B.#.C.',
+      '.####.#...',
+      '.A..#.#.#.',
+      '.##.#...#.',
+      '....###.#S',
+      '.##.....#.',
+      'E...#.....',
     ],
   ];
 
@@ -158,34 +149,16 @@
         if (FRUITS[ch]) fruit.push({ x, y, type: ch });
       }
     }
-    // The robot always sits on a 2×2 "robot grid" anchored at its start
-    // square; fruit snaps to the robot square containing it. Walls stay
-    // on the fine (half-size) grid.
-    const ox = start.x % 2, oy = start.y % 2;
-    const snap = (v, o) => o + Math.floor((v - o) / 2) * 2;
-    const seen = new Set();
-    const snapped = [];
-    fruit.forEach(f => {
-      const x = snap(f.x, ox), y = snap(f.y, oy), k = x + ',' + y;
-      if (!seen.has(k)) { seen.add(k); snapped.push({ x, y, type: f.type }); }
-    });
-    return { w, h, walls, fruit: snapped, start, exit, ox, oy };
+    return { w, h, walls, fruit, start, exit };
   }
 
   function blocked(x, y) {
-    for (let dy = 0; dy < 2; dy++) {
-      for (let dx = 0; dx < 2; dx++) {
-        const cx = x + dx, cy = y + dy;
-        if (cx < 0 || cy < 0 || cx >= level.w || cy >= level.h) return true;
-        if (level.walls[cy][cx]) return true;
-      }
-    }
-    return false;
+    if (x < 0 || y < 0 || x >= level.w || y >= level.h) return true;
+    return level.walls[y][x];
   }
 
   function onExit() {
-    const e = level.exit;
-    return Math.abs(robot.x - e.x) < 2 && Math.abs(robot.y - e.y) < 2;
+    return robot.x === level.exit.x && robot.y === level.exit.y;
   }
 
   /* ── Rendering ── */
@@ -272,7 +245,7 @@
   function collect() {
     items.forEach(it => {
       if (it.taken) return;
-      if (Math.abs(it.x - robot.x) < 2 && Math.abs(it.y - robot.y) < 2) {
+      if (it.x === robot.x && it.y === robot.y) {
         it.taken = true;
         it.el.classList.add('taken');
         counts[it.type]++;
@@ -352,7 +325,6 @@
     app.style.setProperty('--cell', cell + 'px');
     worldEl.style.width = level.w * cell + 'px';
     worldEl.style.height = level.h * cell + 'px';
-    worldEl.style.backgroundPosition = `${level.ox * cell}px ${level.oy * cell}px`;
     worldEl.querySelectorAll('.rb-wall').forEach(d => {
       d.style.left = d.dataset.x * cell + 'px';
       d.style.top = d.dataset.y * cell + 'px';
@@ -362,8 +334,8 @@
     const ex = worldEl.querySelector('.rb-exit');
     ex.style.left = level.exit.x * cell + 'px';
     ex.style.top = level.exit.y * cell + 'px';
-    ex.style.width = 2 * cell + 'px';
-    ex.style.height = 2 * cell + 'px';
+    ex.style.width = cell + 'px';
+    ex.style.height = cell + 'px';
     positionItems();
     placeRobot(0);
   }
@@ -375,8 +347,8 @@
       const nx = robot.x + dx * sign, ny = robot.y + dy * sign;
       if (blocked(nx, ny)) { await bump(dx * sign, dy * sign, token); return false; }
       robot.x = nx; robot.y = ny;
-      placeRobot(180);
-      await sleep(190);
+      placeRobot(260);
+      await sleep(280);
       if (token !== runToken) return false;
       collect();
     }
@@ -384,7 +356,7 @@
   }
 
   async function bump(dx, dy, token) {
-    placeRobot(90, { ox: dx * 0.25, oy: dy * 0.25 });
+    placeRobot(90, { ox: dx * 0.15, oy: dy * 0.15 });
     await sleep(100);
     placeRobot(120);
     await sleep(140);
@@ -434,7 +406,7 @@
   }
 
   function sparkle() {
-    const cx = (robot.x + 1) * cell, cy = (robot.y + 1) * cell;
+    const cx = (robot.x + 0.5) * cell, cy = (robot.y + 0.5) * cell;
     ['⭐', '✨', '🎉', '⭐', '✨', '🎉'].forEach((e, i) => {
       const s = document.createElement('div');
       s.className = 'rb-sparkle';
@@ -442,8 +414,8 @@
       const a = (i / 6) * Math.PI * 2;
       s.style.left = cx + 'px';
       s.style.top = cy + 'px';
-      s.style.setProperty('--dx', Math.cos(a) * cell * 2 + 'px');
-      s.style.setProperty('--dy', Math.sin(a) * cell * 2 + 'px');
+      s.style.setProperty('--dx', Math.cos(a) * cell * 1.2 + 'px');
+      s.style.setProperty('--dy', Math.sin(a) * cell * 1.2 + 'px');
       worldEl.appendChild(s);
       setTimeout(() => s.remove(), 1000);
     });
