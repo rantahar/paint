@@ -69,6 +69,8 @@
   const ICONS = {
     play:  `<polygon points="7 4 20 12 7 20" fill="#3c9a3c" stroke="#222"/>`,
     stop:  `<rect x="6" y="6" width="12" height="12" rx="1.5" fill="#cc4422" stroke="#222"/>`,
+    trash: `<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>`,
+    cancel:`<line x1="6" y1="6" x2="18" y2="18" stroke="#cc4422" stroke-width="3.2"/><line x1="18" y1="6" x2="6" y2="18" stroke="#cc4422" stroke-width="3.2"/>`,
     home:  `<path d="M3 11l9-8 9 8"/><path d="M5 9.5V21h14V9.5"/><rect x="10" y="14" width="4" height="7"/>`,
   };
 
@@ -104,6 +106,7 @@
   const playBtn = $('rb-play');
   const resetBtn = $('rb-reset');
   const levelBtn = $('rb-level');
+  const clearBtn = $('rb-clear');
 
   /* ── State ── */
   const program = loadProgram();
@@ -282,6 +285,7 @@
     playBtn.innerHTML = svg(running ? ICONS.stop : ICONS.play, ic);
     playBtn.classList.toggle('running', running);
     resetBtn.innerHTML = svg(ICONS.home, ic);
+    clearBtn.innerHTML = svg(ICONS.trash, ic);
     // Level indicator: one dot per level, current one filled.
     const n = LEVELS.length;
     let dots = '';
@@ -291,7 +295,7 @@
     }
     levelBtn.innerHTML = `<svg width="${ic}" height="${ic}" viewBox="0 0 24 24">
       <rect x="2" y="5" width="20" height="14" rx="2.5" fill="#f0eeea" stroke="#222" stroke-width="1.8"/>${dots}</svg>`;
-    levelBtn.classList.toggle('inactive', running);
+    [clearBtn, levelBtn].forEach(b => b.classList.toggle('inactive', running));
   }
 
   function markSlot(i, failed) {
@@ -471,6 +475,48 @@
   resetBtn.addEventListener('click', () => {
     if (running) stopRunning();
     resetWorld();
+  });
+  /* Clear-program popup: red ✕ cancels, trash clears all slots. */
+  function openClearPopup() {
+    const back = document.createElement('div');
+    back.className = 'dialog-backdrop';
+    const dlg = document.createElement('div');
+    dlg.className = 'dialog';
+    const row = document.createElement('div');
+    row.className = 'dialog-row';
+    const ic = Math.round(Math.max(slotSize, 48) * 0.7);
+    const cancel = document.createElement('button');
+    cancel.className = 'dialog-btn rb-popup-btn';
+    cancel.id = 'rb-clear-cancel';
+    cancel.innerHTML = svg(ICONS.cancel, ic);
+    const ok = document.createElement('button');
+    ok.className = 'dialog-btn danger rb-popup-btn';
+    ok.id = 'rb-clear-ok';
+    ok.innerHTML = svg(ICONS.trash, ic);
+    row.append(cancel, ok);
+    dlg.appendChild(row);
+    back.appendChild(dlg);
+    app.appendChild(back);
+
+    const close = () => {
+      back.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    cancel.addEventListener('click', close);
+    ok.addEventListener('click', () => {
+      program.fill(null);
+      saveProgram();
+      renderProgram();
+      close();
+    });
+    back.addEventListener('click', e => { if (e.target === back) close(); });
+  }
+
+  clearBtn.addEventListener('click', () => {
+    if (running || program.every(c => !c)) return;
+    openClearPopup();
   });
   levelBtn.addEventListener('click', () => {
     if (running) return;

@@ -217,3 +217,11 @@ body.rb-running .rb-palette { opacity: 0.5; }
   from { transform: translate(-50%, -50%) scale(0.4); opacity: 1; }
   to   { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.2); opacity: 0; }
 }
+
+/* Clear-program popup buttons (icon only, square) */
+.rb-popup-btn {
+  min-width: 0;
+  width: calc(max(var(--s), 48px) * 1.4);
+  height: calc(max(var(--s), 48px) * 1.4);
+  padding: 0;
+}
