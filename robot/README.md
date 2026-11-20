@@ -6,7 +6,8 @@ icons and dialogs with `../finger_paint/`.
 - Drag command blocks (bottom) into the 20 program slots (top); tap a block to append it
 - Drag a placed block to another slot to swap, or off the program to remove it
 - ▶ runs the slots in order (empty slots skipped); ■ stops; 🏠 resets the robot
-- Robot covers 2×2 cells. Forward/back = 2 cells, jump = 4 cells over walls/fruit
+- Grid squares are robot-sized; forward/back = 1 square, jump = 2 squares over walls/fruit
+- Walls use a half-size grid so they can be thin
 - Fruit under the robot is collected and counted in the top bar
 - Arriving on 🏁 makes the robot spin; no win condition
 - Level button (dots) cycles the 3 levels (open field → walls → maze)

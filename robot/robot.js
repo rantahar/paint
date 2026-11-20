@@ -7,9 +7,10 @@
    ones. Fruits under the robot are collected and counted in the top
    bar; arriving on the 🏁 exit makes the robot spin.
 
-   Movement units:
-     forward / back  → 2 cells (one robot length), cell by cell
-     jump            → 4 cells forward, hopping over whatever is between
+   Movement units (one "square" on the drawn grid = one robot = 2×2 cells;
+   the half-size cells exist only so walls can be thin):
+     forward / back  → 1 square
+     jump            → 2 squares, hopping over whatever is between
    ──────────────────────────────────────────────────────────── */
 (function () {
   'use strict';
@@ -54,7 +55,7 @@
       '#RR.........#C.#',
       '#########...#..#',
       '#.......#...#..#',
-      '#..A....#...#..#',
+      '#.A.....#...#..#',
       '#...#####...#..#',
       '#EE...........S#',
       '#EE............#',
@@ -157,7 +158,18 @@
         if (FRUITS[ch]) fruit.push({ x, y, type: ch });
       }
     }
-    return { w, h, walls, fruit, start, exit };
+    // The robot always sits on a 2×2 "robot grid" anchored at its start
+    // square; fruit snaps to the robot square containing it. Walls stay
+    // on the fine (half-size) grid.
+    const ox = start.x % 2, oy = start.y % 2;
+    const snap = (v, o) => o + Math.floor((v - o) / 2) * 2;
+    const seen = new Set();
+    const snapped = [];
+    fruit.forEach(f => {
+      const x = snap(f.x, ox), y = snap(f.y, oy), k = x + ',' + y;
+      if (!seen.has(k)) { seen.add(k); snapped.push({ x, y, type: f.type }); }
+    });
+    return { w, h, walls, fruit: snapped, start, exit, ox, oy };
   }
 
   function blocked(x, y) {
@@ -260,7 +272,7 @@
   function collect() {
     items.forEach(it => {
       if (it.taken) return;
-      if (it.x >= robot.x && it.x < robot.x + 2 && it.y >= robot.y && it.y < robot.y + 2) {
+      if (Math.abs(it.x - robot.x) < 2 && Math.abs(it.y - robot.y) < 2) {
         it.taken = true;
         it.el.classList.add('taken');
         counts[it.type]++;
@@ -340,6 +352,7 @@
     app.style.setProperty('--cell', cell + 'px');
     worldEl.style.width = level.w * cell + 'px';
     worldEl.style.height = level.h * cell + 'px';
+    worldEl.style.backgroundPosition = `${level.ox * cell}px ${level.oy * cell}px`;
     worldEl.querySelectorAll('.rb-wall').forEach(d => {
       d.style.left = d.dataset.x * cell + 'px';
       d.style.top = d.dataset.y * cell + 'px';
