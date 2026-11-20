@@ -103,7 +103,6 @@
   const paletteEl = $('rb-palette');
   const playBtn = $('rb-play');
   const resetBtn = $('rb-reset');
-  const clearBtn = $('rb-clear');
   const levelBtn = $('rb-level');
 
   /* ── State ── */
@@ -283,7 +282,6 @@
     playBtn.innerHTML = svg(running ? ICONS.stop : ICONS.play, ic);
     playBtn.classList.toggle('running', running);
     resetBtn.innerHTML = svg(ICONS.home, ic);
-    clearBtn.innerHTML = FP.icon('clear', ic);
     // Level indicator: one dot per level, current one filled.
     const n = LEVELS.length;
     let dots = '';
@@ -293,7 +291,7 @@
     }
     levelBtn.innerHTML = `<svg width="${ic}" height="${ic}" viewBox="0 0 24 24">
       <rect x="2" y="5" width="20" height="14" rx="2.5" fill="#f0eeea" stroke="#222" stroke-width="1.8"/>${dots}</svg>`;
-    [clearBtn, levelBtn].forEach(b => b.classList.toggle('inactive', running));
+    levelBtn.classList.toggle('inactive', running);
   }
 
   function markSlot(i, failed) {
@@ -473,19 +471,6 @@
   resetBtn.addEventListener('click', () => {
     if (running) stopRunning();
     resetWorld();
-  });
-  clearBtn.addEventListener('click', async () => {
-    if (running || program.every(c => !c)) return;
-    const choice = await FP.dialogs.confirm({
-      choices: [
-        { label: '', icon: 'cancel', value: 'cancel' },
-        { label: '', icon: 'clear', value: 'clear', kind: 'danger' },
-      ],
-    });
-    if (choice !== 'clear') return;
-    program.fill(null);
-    saveProgram();
-    renderProgram();
   });
   levelBtn.addEventListener('click', () => {
     if (running) return;
