@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f3ee">
+  <title>Robot Maze</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="../finger_paint/icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../finger_paint/icons/icon-192.png">
+  <link rel="stylesheet" href="../finger_paint/style.css?v=22">
+  <link rel="stylesheet" href="robot.css?v=3">
+</head>
+<body>
+  <div id="robot-app">
+    <div class="rb-top">
+      <div class="rb-fruits" id="rb-fruits"></div>
+      <div class="rb-actions">
+        <button class="btn rb-btn" id="rb-level"></button>
+        <button class="btn rb-btn" id="rb-clear"></button>
+        <button class="btn rb-btn" id="rb-reset"></button>
+        <button class="btn rb-btn accent rb-play" id="rb-play"></button>
+      </div>
+    </div>
+    <div class="rb-program" id="rb-program"></div>
+    <div class="rb-world-wrap" id="rb-world-wrap">
+      <div class="rb-world" id="rb-world"></div>
+    </div>
+    <div class="rb-palette" id="rb-palette"></div>
+  </div>
+
+  <script src="../finger_paint/js/icons.js?v=22"></script>
+  <script src="../finger_paint/js/dialogs.js?v=22"></script>
+  <script src="robot.js?v=3"></script>
+</body>
+</html>
