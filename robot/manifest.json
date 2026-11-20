@@ -1,0 +1,17 @@
+{
+  "id": "finger-paint-robot",
+  "name": "Robot Maze",
+  "short_name": "Robot",
+  "description": "A picture-only programming game: drag command blocks to guide a robot to the exit and collect fruit.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#f5f3ee",
+  "theme_color": "#f5f3ee",
+  "icons": [
+    { "src": "../finger_paint/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "../finger_paint/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "../finger_paint/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

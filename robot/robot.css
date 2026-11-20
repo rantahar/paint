@@ -1,0 +1,219 @@
+/* ────────────────────────────────────────────────────────────
+   Robot Maze — styles layered on top of ../style.css.
+   --s (slot size) and --cell (world cell size) are set by robot.js.
+   ──────────────────────────────────────────────────────────── */
+
+#robot-app {
+  --s: 56px;
+  --gap: calc(var(--s) * 0.15);
+  --cell: 32px;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) * 1.4);
+  padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+           max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  background: #f5f3ee;
+}
+
+/* Buttons from the paint app are absolutely positioned; here they flow. */
+#robot-app .btn { position: relative; }
+
+/* ── Top bar: fruit counters + actions ── */
+.rb-top {
+  flex: 0 0 auto;
+  height: var(--s);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+}
+.rb-fruits {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--gap) * 2);
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.rb-fruit-count {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--s) * 0.08);
+  height: 100%;
+  padding: 0 calc(var(--s) * 0.2);
+  border-radius: 8px;
+  background: #ffffff;
+  border: 2px solid rgba(0,0,0,0.2);
+  font-size: calc(var(--s) * 0.5);
+  font-weight: 700;
+  color: #333;
+}
+.rb-fruit-count .em { font-size: calc(var(--s) * 0.6); line-height: 1; }
+.rb-fruit-count.bump { animation: rbBump 300ms ease-out; }
+@keyframes rbBump {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+.rb-actions { display: flex; gap: var(--gap); height: 100%; }
+.rb-btn { width: var(--s); height: var(--s); flex: 0 0 auto; }
+.rb-play { width: calc(var(--s) * 1.5); }
+.rb-play.running { background: #ffd0c0; border-color: #cc4422; }
+
+/* ── Program: 2 rows × 10 slots ── */
+.rb-program {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(10, var(--s));
+  grid-auto-rows: var(--s);
+  gap: var(--gap);
+  justify-content: center;
+  padding: var(--gap);
+  background: rgba(242,240,235,0.85);
+  outline: 1px solid rgba(0,0,0,0.1);
+  border-radius: 12px;
+  align-self: center;
+}
+.rb-slot {
+  position: relative;
+  border: 2px dashed rgba(0,0,0,0.25);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.5);
+}
+.rb-slot.drop-hover { border-color: #1177EE; background: #e4efff; }
+.rb-slot .rb-block { position: absolute; inset: -2px; }
+.rb-slot.current .rb-block,
+.rb-slot.current {
+  outline: 3px solid #1177EE;
+  outline-offset: 1px;
+}
+.rb-slot.failed .rb-block { animation: rbShake 300ms ease-in-out; }
+@keyframes rbShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-12%); }
+  75% { transform: translateX(12%); }
+}
+
+/* ── Command blocks ── */
+.rb-block {
+  width: var(--s);
+  height: var(--s);
+  border: 2px solid rgba(0,0,0,0.5);
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+  background: #ffffff;
+}
+.rb-block svg { display: block; pointer-events: none; }
+.rb-block.move { background: #c6ecbf; }
+.rb-block.turn { background: #bbddff; }
+.rb-block.jump { background: #ffe4b5; }
+
+.rb-palette {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  gap: calc(var(--gap) * 2);
+  padding: var(--gap);
+}
+.rb-palette .rb-block {
+  width: calc(var(--s) * 1.25);
+  height: calc(var(--s) * 1.25);
+}
+.rb-palette .rb-block:active { transform: scale(0.96); }
+
+.rb-ghost {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(1.1);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+}
+
+body.rb-running .rb-program .rb-block,
+body.rb-running .rb-palette .rb-block { cursor: default; }
+body.rb-running .rb-palette { opacity: 0.5; }
+
+/* ── World ── */
+.rb-world-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rb-world {
+  position: relative;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(to right, rgba(0,0,0,0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px);
+  background-size: var(--cell) var(--cell);
+  border: 1px solid rgba(0,0,0,0.15);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+  overflow: hidden;
+}
+.rb-wall {
+  position: absolute;
+  background: #b9744f;
+  border: 1px solid #7a4429;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.18);
+  border-radius: 3px;
+}
+.rb-exit {
+  position: absolute;
+  background: repeating-conic-gradient(#d8f3d0 0 25%, #a9e09b 0 50%) 0 0 / calc(var(--cell) * 0.5) calc(var(--cell) * 0.5);
+  border: 3px solid #4f9a40;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--cell) * 1.1);
+}
+.rb-item {
+  position: absolute;
+  width: var(--cell);
+  height: var(--cell);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--cell) * 0.8);
+  line-height: 1;
+  transition: transform 250ms ease-out, opacity 250ms ease-out;
+}
+.rb-item.taken { transform: scale(1.8); opacity: 0; }
+
+.rb-robot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(var(--cell) * 2);
+  height: calc(var(--cell) * 2);
+  padding: calc(var(--cell) * 0.1);
+  background: #ffffff;
+  border: 2px solid rgba(0,0,0,0.5);
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  transform-origin: center center;
+  z-index: 3;
+}
+.rb-robot svg { width: 100%; height: 100%; display: block; }
+
+.rb-sparkle {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  font-size: calc(var(--cell) * 0.9);
+  animation: rbSparkle 900ms ease-out forwards;
+}
+@keyframes rbSparkle {
+  from { transform: translate(-50%, -50%) scale(0.4); opacity: 1; }
+  to   { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.2); opacity: 0; }
+}
