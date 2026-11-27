@@ -443,6 +443,11 @@
     if (def.kind === 'repeat') {
       const target = nextFilled(i + 1);
       if (target >= SLOT_COUNT) return SLOT_COUNT;
+      let body = target;
+      while (body < SLOT_COUNT && COMMANDS[program[body]].kind === 'repeat') {
+        body = nextFilled(body + 1);
+      }
+      if (body >= SLOT_COUNT) return SLOT_COUNT;
       let after = target + 1;
       for (let k = 0; k < def.times; k++) {
         after = await execAt(target, loops.concat(i), token, state);
