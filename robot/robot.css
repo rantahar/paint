@@ -90,6 +90,10 @@
   outline: 3px solid #1177EE;
   outline-offset: 1px;
 }
+.rb-slot.looping .rb-block {
+  outline: 3px solid #8a4fd0;
+  outline-offset: 1px;
+}
 .rb-slot.failed .rb-block { animation: rbShake 300ms ease-in-out; }
 @keyframes rbShake {
   0%, 100% { transform: translateX(0); }
@@ -115,18 +119,20 @@
 .rb-block.move { background: #c6ecbf; }
 .rb-block.turn { background: #bbddff; }
 .rb-block.jump { background: #ffe4b5; }
+.rb-block.repeat { background: #e3d2f5; }
 
 .rb-palette {
   flex: 0 0 auto;
   display: flex;
   justify-content: center;
-  gap: calc(var(--gap) * 2);
+  gap: var(--gap);
   padding: var(--gap);
 }
 .rb-palette .rb-block {
-  width: calc(var(--s) * 1.25);
-  height: calc(var(--s) * 1.25);
+  width: calc(var(--s) * 1.1);
+  height: calc(var(--s) * 1.1);
 }
+.rb-palette .rb-block.jump { margin-right: var(--gap); }
 .rb-palette .rb-block:active { transform: scale(0.96); }
 
 .rb-ghost {
@@ -218,10 +224,3 @@ body.rb-running .rb-palette { opacity: 0.5; }
   to   { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.2); opacity: 0; }
 }
 
-/* Clear-program popup buttons (icon only, square) */
-.rb-popup-btn {
-  min-width: 0;
-  width: calc(max(var(--s), 48px) * 1.4);
-  height: calc(max(var(--s), 48px) * 1.4);
-  padding: 0;
-}
