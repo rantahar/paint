@@ -436,6 +436,7 @@
      or -1 if the run was cancelled. A repeat block runs the next
      instruction `times` times (a repeat after a repeat nests). */
   async function execAt(i, loops, token, state) {
+    if (token !== runToken) return -1;
     i = nextFilled(i);
     if (i >= SLOT_COUNT) return SLOT_COUNT;
     const cmd = program[i];
