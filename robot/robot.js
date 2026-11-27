@@ -63,14 +63,17 @@
     turnback: { kind: 'turn', icon: `<path d="M7 21V10a5 5 0 0110 0v9"/><polyline points="13 15 17 19 21 15"/>` },
     jump:     { kind: 'jump', icon: `<rect x="10" y="15" width="4" height="6" fill="#b9744f" stroke="#7a4429" stroke-width="1.2"/>
                                      <path d="M3 21Q12 0 20 18"/><polyline points="15.1 14.5 20 18 20.6 12"/>` },
+    // Repeat blocks: run the next instruction N times (nested repeats multiply).
+    rep2: { kind: 'repeat', times: 2, icon: `<path d="M20 12a8 8 0 1 1-2.34-5.66"/><polyline points="18.5 2.5 18.5 7 14 7"/><text x="11.6" y="16.2" text-anchor="middle" font-size="11.5" font-weight="800" font-family="sans-serif" fill="#222" stroke="none">2</text>` },
+    rep3: { kind: 'repeat', times: 3, icon: `<path d="M20 12a8 8 0 1 1-2.34-5.66"/><polyline points="18.5 2.5 18.5 7 14 7"/><text x="11.6" y="16.2" text-anchor="middle" font-size="11.5" font-weight="800" font-family="sans-serif" fill="#222" stroke="none">3</text>` },
+    rep4: { kind: 'repeat', times: 4, icon: `<path d="M20 12a8 8 0 1 1-2.34-5.66"/><polyline points="18.5 2.5 18.5 7 14 7"/><text x="11.6" y="16.2" text-anchor="middle" font-size="11.5" font-weight="800" font-family="sans-serif" fill="#222" stroke="none">4</text>` },
   };
-  const PALETTE_ORDER = ['forward', 'back', 'left', 'right', 'turnback', 'jump'];
+  const PALETTE_ORDER = ['forward', 'back', 'left', 'right', 'turnback', 'jump', 'rep2', 'rep3', 'rep4'];
 
   const ICONS = {
     play:  `<polygon points="7 4 20 12 7 20" fill="#3c9a3c" stroke="#222"/>`,
     stop:  `<rect x="6" y="6" width="12" height="12" rx="1.5" fill="#cc4422" stroke="#222"/>`,
     trash: `<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>`,
-    cancel:`<line x1="6" y1="6" x2="18" y2="18" stroke="#cc4422" stroke-width="3.2"/><line x1="18" y1="6" x2="6" y2="18" stroke="#cc4422" stroke-width="3.2"/>`,
     home:  `<path d="M3 11l9-8 9 8"/><path d="M5 9.5V21h14V9.5"/><rect x="10" y="14" width="4" height="7"/>`,
   };
 
@@ -277,7 +280,7 @@
 
   function renderPalette() {
     paletteEl.innerHTML = '';
-    PALETTE_ORDER.forEach(cmd => paletteEl.appendChild(makeBlock(cmd, slotSize * 0.9)));
+    PALETTE_ORDER.forEach(cmd => paletteEl.appendChild(makeBlock(cmd, slotSize * 0.8)));
   }
 
   function renderButtons() {
@@ -298,8 +301,9 @@
     [clearBtn, levelBtn].forEach(b => b.classList.toggle('inactive', running));
   }
 
-  function markSlot(i, failed) {
-    programEl.querySelectorAll('.rb-slot').forEach(s => s.classList.remove('current', 'failed'));
+  function markSlot(i, failed, loops) {
+    programEl.querySelectorAll('.rb-slot').forEach(s => s.classList.remove('current', 'failed', 'looping'));
+    (loops || []).forEach(j => { const s = programEl.children[j]; if (s) s.classList.add('looping'); });
     if (i < 0) return;
     const s = programEl.children[i];
     if (!s) return;
@@ -423,6 +427,49 @@
     });
   }
 
+  function nextFilled(i) {
+    while (i < SLOT_COUNT && !program[i]) i++;
+    return i;
+  }
+
+  /* Execute the instruction at (or after) slot i; returns the index after it,
+     or -1 if the run was cancelled. A repeat block runs the next
+     instruction `times` times (a repeat after a repeat nests). */
+  async function execAt(i, loops, token, state) {
+    i = nextFilled(i);
+    if (i >= SLOT_COUNT) return SLOT_COUNT;
+    const cmd = program[i];
+    const def = COMMANDS[cmd];
+    if (def.kind === 'repeat') {
+      const target = nextFilled(i + 1);
+      if (target >= SLOT_COUNT) return SLOT_COUNT;
+      let after = target + 1;
+      for (let k = 0; k < def.times; k++) {
+        after = await execAt(target, loops.concat(i), token, state);
+        if (after < 0) return -1;
+      }
+      return after;
+    }
+    markSlot(i, false, loops);
+    let ok = true;
+    switch (cmd) {
+      case 'forward':  ok = await moveCells(STEP, 1, token); break;
+      case 'back':     ok = await moveCells(STEP, -1, token); break;
+      case 'left':     ok = await turn(-90); break;
+      case 'right':    ok = await turn(90); break;
+      case 'turnback': ok = await turn(180); break;
+      case 'jump':     ok = await jump(token); break;
+    }
+    if (token !== runToken) return -1;
+    if (!ok) { markSlot(i, true, loops); await sleep(250); }
+    const now = onExit();
+    if (now && !state.wasOnExit) await celebrate();
+    state.wasOnExit = now;
+    await sleep(120);
+    if (token !== runToken) return -1;
+    return i + 1;
+  }
+
   async function runProgram() {
     const token = ++runToken;
     running = true;
@@ -431,27 +478,11 @@
     resetWorld();
     await sleep(250);
 
-    let wasOnExit = onExit();
-    for (let i = 0; i < SLOT_COUNT; i++) {
-      if (token !== runToken) return;
-      const cmd = program[i];
-      if (!cmd) continue;
-      markSlot(i);
-      let ok = true;
-      switch (cmd) {
-        case 'forward':  ok = await moveCells(STEP, 1, token); break;
-        case 'back':     ok = await moveCells(STEP, -1, token); break;
-        case 'left':     ok = await turn(-90); break;
-        case 'right':    ok = await turn(90); break;
-        case 'turnback': ok = await turn(180); break;
-        case 'jump':     ok = await jump(token); break;
-      }
-      if (token !== runToken) return;
-      if (!ok) { markSlot(i, true); await sleep(250); }
-      const now = onExit();
-      if (now && !wasOnExit) await celebrate();
-      wasOnExit = now;
-      await sleep(120);
+    const state = { wasOnExit: onExit() };
+    let i = 0;
+    while (i < SLOT_COUNT) {
+      i = await execAt(i, [], token, state);
+      if (i < 0) return;    // cancelled
     }
     if (token !== runToken) return;
     markSlot(-1);
@@ -476,47 +507,12 @@
     if (running) stopRunning();
     resetWorld();
   });
-  /* Clear-program popup: red ✕ cancels, trash clears all slots. */
-  function openClearPopup() {
-    const back = document.createElement('div');
-    back.className = 'dialog-backdrop';
-    const dlg = document.createElement('div');
-    dlg.className = 'dialog';
-    const row = document.createElement('div');
-    row.className = 'dialog-row';
-    const ic = Math.round(Math.max(slotSize, 48) * 0.7);
-    const cancel = document.createElement('button');
-    cancel.className = 'dialog-btn rb-popup-btn';
-    cancel.id = 'rb-clear-cancel';
-    cancel.innerHTML = svg(ICONS.cancel, ic);
-    const ok = document.createElement('button');
-    ok.className = 'dialog-btn danger rb-popup-btn';
-    ok.id = 'rb-clear-ok';
-    ok.innerHTML = svg(ICONS.trash, ic);
-    row.append(cancel, ok);
-    dlg.appendChild(row);
-    back.appendChild(dlg);
-    app.appendChild(back);
-
-    const close = () => {
-      back.remove();
-      document.removeEventListener('keydown', onKey);
-    };
-    const onKey = e => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', onKey);
-    cancel.addEventListener('click', close);
-    ok.addEventListener('click', () => {
-      program.fill(null);
-      saveProgram();
-      renderProgram();
-      close();
-    });
-    back.addEventListener('click', e => { if (e.target === back) close(); });
-  }
-
+  // Trash: remove the last instruction in the program.
   clearBtn.addEventListener('click', () => {
-    if (running || program.every(c => !c)) return;
-    openClearPopup();
+    if (running) return;
+    for (let i = SLOT_COUNT - 1; i >= 0; i--) {
+      if (program[i]) { program[i] = null; saveProgram(); renderProgram(); break; }
+    }
   });
   levelBtn.addEventListener('click', () => {
     if (running) return;
